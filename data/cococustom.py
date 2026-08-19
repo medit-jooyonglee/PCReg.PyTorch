@@ -54,6 +54,15 @@ def sampling_points_and_polygons(uniform_polygons, sample_args, pose):
     this_archs = np.array(this_archs)
     return this_polys, this_archs
         
+
+def coco_directory_structure_check(coco_dataset:torchvision.datasets.CocoDetection):
+    coco = coco_dataset.coco
+    for image_info in coco.dataset.get("images", []):
+        file_name = image_info.get("file_name")
+
+        if isinstance(file_name, str):
+            image_info["file_name"] = file_name.replace("\\", "/")
+    coco.createIndex()
     
 class CocoDetection(torchvision.datasets.CocoDetection):
     def __init__(self, *,
@@ -62,6 +71,7 @@ class CocoDetection(torchvision.datasets.CocoDetection):
                  **kwargs):
         super(CocoDetection, self).__init__(img_folder, ann_file)
         # internal-splits
+        coco_directory_structure_check(self)
         self.train = train
         self.split = 0.8 if train else 0.2
         # self._transforms = transforms
@@ -71,8 +81,19 @@ class CocoDetection(torchvision.datasets.CocoDetection):
     def __len__(self):
         total_len = len(self.ids) * 2
         return int(total_len * self.split)
+        # for debugging
+        # return 10
 
-    def __getitem__(self, in_idx0):
+    def __getitem__(self, idx):
+        while True:
+            try:
+                res = self.item(idx)
+                return res
+            except Exception as e:
+                print(f"Error processing index {idx}: {e}")
+                idx = (idx + 1) % len(self.ids)  # Move to the next index
+                
+    def item(self, in_idx0):
         total_len = len(self.ids) * 2
         idx0 = in_idx0 if self.train else in_idx0 + int(total_len * (1 - self.split))
         
@@ -81,7 +102,10 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         img, target = super(CocoDetection, self).__getitem__(idx)
         image_id = self.ids[idx]
         target = {'image_id': image_id, 'annotations': target}
-        return  self.prepare(img, target, pose=pose)
+        # try:
+        return self.prepare(img, target, pose=pose)
+        # except Exception as e:
+            
 
 
 class ConvertCoco(object):

@@ -105,12 +105,12 @@ def train_one_epoch(train_loader, model, loss_fn, optimizer):
     r_mse, r_mae, t_mse, t_mae, r_isotropic, t_isotropic = [], [], [], [], [], []
     scale_maes = []
     train_loader = iter(train_loader)
-    for i in tqdm(range(len(train_loader))):
-        try:
-            batch = next(train_loader)
-        except Exception as e:
-            print(f"Error occurred while fetching batch {i}: {e}")
-            continue
+    for batch in tqdm(train_loader):
+        # try:
+        #     batch = next(train_loader)
+        # except Exception as e:
+        #     print(f"Error occurred while fetching batch {i}: {e}")
+        #     continue
             
         gtR, gtt = batch[2].cuda(), batch[3].cuda()
         optimizer.zero_grad()
@@ -150,15 +150,11 @@ def test_one_epoch(test_loader, model, loss_fn):
     model.eval()
     losses = []
     r_mse, r_mae, t_mse, t_mae, r_isotropic, t_isotropic = [], [], [], [], [], []
-    test_loader = iter(test_loader)
+    # test_loader = iter(test_loader)
     with torch.no_grad():
         scale_maes = []
-        for _ in tqdm(range(len(test_loader))):
-            try:
-                batch = next(test_loader)
-            except Exception as e:
-                print(f"Error occurred while fetching batch: {e}")
-                continue
+        for batch in tqdm(test_loader):
+            
             gtR, gtt = batch[2].cuda(), batch[3].cuda()
             loss, R, t, scale_mae = forward_registration(model, batch, loss_fn)
             cur_r_mse, cur_r_mae, cur_t_mse, cur_t_mae, cur_r_isotropic, \
@@ -205,12 +201,13 @@ def main():
         os.makedirs(checkpoints_path)
 
     estimate_scale = args.registration_mode == 'similarity'
+    dataset_path = '/data1/jooyonglee/reverse_tomo/xray_panoramic/cbct_ios_dcm/'
     dataset_kwargs = {
         'estimate_scale': estimate_scale,
         'min_scale': args.min_scale,
         'max_scale': args.max_scale,
-        'img_folder': 'E:/dataset/reverse_tomosynthesis/kaggle_xrays/cbct_ios_dcm',
-        'ann_file': 'E:/dataset/reverse_tomosynthesis/kaggle_xrays/cbct_ios_dcm/annotations.JSON',
+        'img_folder': dataset_path,
+        'ann_file': os.path.join(dataset_path, 'annotations.json'),
     }
     train_set = CocoDetection(root=args.root, npts=args.train_npts, train=True, **dataset_kwargs)
     test_set = CocoDetection(root=args.root, npts=args.train_npts, train=False, **dataset_kwargs)
@@ -283,4 +280,5 @@ def main():
 
 
 if __name__ == '__main__':
+    torch.cuda.set_device('cuda:4')
     main()
