@@ -18,7 +18,7 @@ from trainer import torch_utils, vtk_utils
 
 from pcregmodel.data.cococustom import CocoDetection
 
-visualize = False
+visualize = True
 def setup_seed(seed):
     torch.backends.cudnn.deterministic = True
     torch.manual_seed(seed)

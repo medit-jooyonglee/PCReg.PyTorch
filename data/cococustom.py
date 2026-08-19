@@ -64,6 +64,7 @@ def coco_directory_structure_check(coco_dataset:torchvision.datasets.CocoDetecti
             image_info["file_name"] = file_name.replace("\\", "/")
     coco.createIndex()
     
+    
 class CocoDetection(torchvision.datasets.CocoDetection):
     def __init__(self, *,
                  img_folder='', ann_file='', include_masks=True,
@@ -72,17 +73,20 @@ class CocoDetection(torchvision.datasets.CocoDetection):
                  estimate_scale=True,
                  min_scale=0.9,
                  max_scale=1.1,
+                 deform_mode=False,
                  **kwargs):
         super(CocoDetection, self).__init__(img_folder, ann_file)
         # internal-splits
         coco_directory_structure_check(self)
+        # self.deform_mode = deform_mode
         self.train = train
         self.split = 0.8 if train else 0.2
         # self._transforms = transforms
         self.include_masks = include_masks
         self.prepare = ConvertCoco(include_masks=include_masks, npts=npts,
                                    estimate_scale=estimate_scale,
-                                   min_scale=min_scale, max_scale=max_scale)
+                                   min_scale=min_scale, max_scale=max_scale,
+                                   deform_mode=deform_mode)
         
     def __len__(self):
         total_len = len(self.ids) * 2
@@ -117,9 +121,10 @@ class CocoDetection(torchvision.datasets.CocoDetection):
 class ConvertCoco(object):
 
     def __init__(self, include_masks=False, npts=256, estimate_scale=True,
-                 min_scale=0.9, max_scale=1.1):
+                 min_scale=0.9, max_scale=1.1, deform_mode=False, **kwargs):
         self.include_masks = include_masks
         self.npts = npts
+        self.deform_mode = deform_mode
         self.estimate_scale = estimate_scale
         self.min_scale = min_scale
         self.max_scale = max_scale
@@ -217,20 +222,22 @@ class ConvertCoco(object):
         
         
 
-        deform_mode = False
+        deform_mode = self.deform_mode
+        
         if deform_mode:
 
             deform_upper_arch, new_coeff = deform_quadratic_curve(
                 this_archs,
                 *fit_upper_coeef,
-                a_ratio=0.08,
-                b_ratio=0.0,
+                a_ratio=0.2,
+                b_ratio=0.00,
                 c_range=0.05,
                 x_scale_ratio=0.05,
-                x_shift_range=2.0,
+                # x_shift_range=0,
+                x_shift_range=(20/max_len),
                 x_noise_ratio=0.0,
             )
-
+            # vtk_utils.show([vtk_utils.create_curve_actor(this_archs), vtk_utils.create_curve_actor(deform_upper_arch)])
             moving_points = sampler.apply_proxy_idw_deformation_points( moving_points,
                                                     this_archs,
                                                     deform_upper_arch,
@@ -903,6 +910,7 @@ if __name__ == "__main__":
         img_folder='E:/dataset/reverse_tomosynthesis/kaggle_xrays/cbct_ios_dcm',
         ann_file='E:/dataset/reverse_tomosynthesis/kaggle_xrays/cbct_ios_dcm/annotations.json',
         # None
+        deform_mode=True,
         
         
     )
@@ -928,6 +936,7 @@ if __name__ == "__main__":
         vtk_utils.split_show([
             vtk_utils.create_points_actor(tgt, point_size=5, color=(0, 1, 0)),
             vtk_utils.create_points_actor(src, point_size=2, color=(1, 1, 0)),
+            # vtk_utils.poi
         ], [
             vtk_utils.create_points_actor(tgt, point_size=5, color=(0, 1, 0)),
             vtk_utils.create_points_actor(fit_src, point_size=2, color=(1, 1, 0)),
@@ -935,6 +944,9 @@ if __name__ == "__main__":
         ], [
             vtk_utils.create_points_actor(moving_target, point_size=5, color=(0, 1, 0)),
             vtk_utils.create_points_actor(fit_src, point_size=2, color=(1, 1, 0)),
+            vtk_utils.create_points_actor(src, point_size=2, color=(1, 1, 0)),
+            vtk_utils.point_pair(src, moving_target),
+            
             
         ])
         print(torch_utils.get_shape(item))
