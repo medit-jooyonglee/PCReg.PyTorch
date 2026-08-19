@@ -861,14 +861,26 @@ def convert_coco_poly_to_mask(segmentations, height, width):
 
 if __name__ == "__main__":
     dataset = CocoDetection(
-        img_folder='E:/dataset/reverse_tomosynthesis/kaggle_xrays/cbct_ios_dcm',
-        ann_file='E:/dataset/reverse_tomosynthesis/kaggle_xrays/cbct_ios_dcm/annotations.json',
+        'E:/dataset/reverse_tomosynthesis/kaggle_xrays/cbct_ios_dcm',
+        'E:/dataset/reverse_tomosynthesis/kaggle_xrays/cbct_ios_dcm/annotations.JSON',
+        None
+        
+        
     )
+    
     assert len(dataset) > 0
     
     
     for _ in range(len(dataset)):
         item = dataset[np.random.randint(len(dataset))]
+        tgt, src, R, t, scale = item
+        
+        fit_src = similarity_transform(src, R, t, scale)
+        vtk_utils.split_show([
+            src, tgt
+        ], [
+            tgt, src
+        ])
         print(torch_utils.get_shape(item))
         
         tgt, src, R, t, scale = item
