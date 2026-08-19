@@ -13,7 +13,7 @@ from models import IterativeBenchmark, IterativeSimilarityBenchmark
 from loss import EMDLosspy
 from metrics import compute_metrics, summary_metrics, print_train_info
 from utils import time_calc
-
+from trainer import torch_utils, vtk_utils
 # from pc
 
 from pcregmodel.data.cococustom import CocoDetection
@@ -39,7 +39,7 @@ def config_params():
                         help='whether to use group normalization')
     parser.add_argument('--epoches', type=int, default=400)
     parser.add_argument('--batchsize', type=int, default=1)
-    parser.add_argument('--num_workers', type=int, default=4)
+    parser.add_argument('--num_workers', type=int, default=0)
     parser.add_argument('--in_dim', type=int, default=3,
                         help='3 for (x, y, z) or 6 for (x, y, z, nx, ny, nz)')
     parser.add_argument('--niters', type=int, default=8,
@@ -53,6 +53,8 @@ def config_params():
     parser.add_argument('--max_log_scale', type=float, default=0.35)
     parser.add_argument('--sample_count1', type=int, default=256)
     parser.add_argument('--sample_count2', type=int, default=64)
+    parser.add_argument('--resume', type=str, 
+                        default='work_dirs/models/checkpoints/test_min_rmse_error.pth')
     parser.add_argument('--lr', type=float, default=0.0001,
                         help='initial learning rate')
     parser.add_argument('--milestones', type=list, default=[50, 250],
@@ -201,7 +203,8 @@ def main():
         os.makedirs(checkpoints_path)
 
     estimate_scale = args.registration_mode == 'similarity'
-    dataset_path = '/data1/jooyonglee/reverse_tomo/xray_panoramic/cbct_ios_dcm/'
+    # dataset_path = '/data1/jooyonglee/reverse_tomo/xray_panoramic/cbct_ios_dcm/'
+    dataset_path = 'E:/dataset/reverse_tomosynthesis/kaggle_xrays/cbct_ios_dcm'
     dataset_kwargs = {
         'estimate_scale': estimate_scale,
         'min_scale': args.min_scale,
@@ -239,7 +242,16 @@ def main():
                                                      last_epoch=-1)
 
     writer = SummaryWriter(summary_path)
-
+    
+    if args.resume and os.path.exists(args.resume):
+        resume = args.resume
+        # from trainer import utils as trainer_utils
+        state_dict = torch.load(resume, map_location='cpu')
+        res = model.load_state_dict(state_dict, strict=False)
+        print(f'loading complete: {resume} / {res}')
+        # print(res)
+    
+    
     test_min_loss, test_min_r_mse_error, test_min_rot_error = \
         float('inf'), float('inf'), float('inf')
     for epoch in range(args.epoches):
@@ -280,5 +292,5 @@ def main():
 
 
 if __name__ == '__main__':
-    torch.cuda.set_device('cuda:4')
+    torch.cuda.set_device('cuda:0')
     main()

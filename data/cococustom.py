@@ -175,6 +175,8 @@ class ConvertCoco(object):
             max_len = np.max([w, h])
             for i, pts in enumerate(uniform_polygons):
                 uniform_polygons[i] = (pts - np.array([w/2, h/2])) / max_len
+        else:
+            raise NotImplementedError("Currently only pc_normalize=True is supported.")
         
         
         # from xray - from left to right
@@ -204,7 +206,7 @@ class ConvertCoco(object):
         
 
         deform_mode = False
-        similarity_transform = True
+        en_similarity_transform = True
         if deform_mode:
             
             deform_upper_arch, new_coeff = deform_quadratic_curve(
@@ -230,14 +232,14 @@ class ConvertCoco(object):
             
         moving_points = np.concatenate([moving_points, np.zeros_like(moving_points[:, :1])], axis=-1)
         target_points = np.concatenate([target_points, np.zeros_like(target_points[:, :1])], axis=-1)
-        if similarity_transform:
+        if en_similarity_transform:
         
             # pivot ransfomr transform
             
             afm_mat = image_utils.batch_aug_params(
                 {
                     'rotate': [np.pi/15, 0, 0 ],
-                    'translate': [0.05*w, 0.05 * h, 0.0],
+                    'translate': [0.05, 0.05 , 0.0],
                     'scale': [0.95, 1.05],
                 },
                 1,
@@ -251,7 +253,7 @@ class ConvertCoco(object):
             # geometry_numpy.decompose_complete_matrix()
             
             
-            rot, scale, translate =  geometry_numpy.decompose_complete_matrix(afm_mat[0], first_scale=False)
+            rot, scale, translate =  geometry_numpy.decompose_complete_matrix(afm_mat[0], first_scale=True)
                 
             tol = 1e-6
             scale0 = scale.copy()
@@ -259,7 +261,9 @@ class ConvertCoco(object):
             assert np.allclose(scale0, 0, atol=tol), 'we set identical x, y,z  scaling'
             # TODO: converting. 
             R, scale, t = rot, scale[0, 0], translate
-            moving_points = inverse_similarity_transform(moving_points, R, t, scale)
+            transed_moving_points = inverse_similarity_transform(moving_points, R, t, scale)
+            # restored = similarity_transform(transed_moving_points, R, t, scale)
+            moving_points = transed_moving_points
         else:
             raise NotImplementedError("Only similarity transform is implemented for moving points.")
             # pass
@@ -857,16 +861,22 @@ def convert_coco_poly_to_mask(segmentations, height, width):
 
 if __name__ == "__main__":
     dataset = CocoDetection(
-        'E:/dataset/reverse_tomosynthesis/kaggle_xrays/cbct_ios_dcm',
-        'E:/dataset/reverse_tomosynthesis/kaggle_xrays/cbct_ios_dcm/annotations.JSON',
-        None
-        
-        
+        img_folder='E:/dataset/reverse_tomosynthesis/kaggle_xrays/cbct_ios_dcm',
+        ann_file='E:/dataset/reverse_tomosynthesis/kaggle_xrays/cbct_ios_dcm/annotations.json',
     )
-    
     assert len(dataset) > 0
     
     
     for _ in range(len(dataset)):
         item = dataset[np.random.randint(len(dataset))]
+        print(torch_utils.get_shape(item))
+        
+        tgt, src, R, t, scale = item
+        
+        fit_src = similarity_transform(src, R, t, scale)
+        vtk_utils.split_show([
+            src, tgt
+        ], [
+            tgt, fit_src
+        ])
         print(torch_utils.get_shape(item))
