@@ -163,7 +163,7 @@ class ConvertCoco(object):
         pose_inds = upper_inds if pose == 'upper' else lower_inds
         this_polys, this_archs = sampling_points_and_polygons(uniform_polygons, pose_inds, pose)
         # upper_arch = [np.mean(uniform_polygons[v], axis=0) for v in upper_inds]
-        
+        # assert len(this_polys)  > 0, f"No polygons found for pose '{pose}' with indices {pose_inds}."
         # source - points
         this_polys_concat = np.concatenate(this_polys, axis=0)
         
@@ -252,7 +252,7 @@ class ConvertCoco(object):
         # # 
         # # drop polygons
         
-        
+        # https://github.com/medit-AI/reverse-registration/blob/develop_registration/outputs
         # vtk_utils.split_show([
         #     vtk_utils.create_curve_actor(this_archs),
         #     vtk_utils.create_curve_actor(deform_upper_arch),

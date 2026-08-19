@@ -104,7 +104,14 @@ def train_one_epoch(train_loader, model, loss_fn, optimizer):
     losses = []
     r_mse, r_mae, t_mse, t_mae, r_isotropic, t_isotropic = [], [], [], [], [], []
     scale_maes = []
-    for batch in tqdm(train_loader):
+    train_loader = iter(train_loader)
+    for i in tqdm(range(len(train_loader))):
+        try:
+            batch = next(train_loader)
+        except Exception as e:
+            print(f"Error occurred while fetching batch {i}: {e}")
+            continue
+            
         gtR, gtt = batch[2].cuda(), batch[3].cuda()
         optimizer.zero_grad()
         loss, R, t, scale_mae = forward_registration(model, batch, loss_fn)
@@ -143,9 +150,15 @@ def test_one_epoch(test_loader, model, loss_fn):
     model.eval()
     losses = []
     r_mse, r_mae, t_mse, t_mae, r_isotropic, t_isotropic = [], [], [], [], [], []
+    test_loader = iter(test_loader)
     with torch.no_grad():
         scale_maes = []
-        for batch in tqdm(test_loader):
+        for _ in tqdm(range(len(test_loader))):
+            try:
+                batch = next(test_loader)
+            except Exception as e:
+                print(f"Error occurred while fetching batch: {e}")
+                continue
             gtR, gtt = batch[2].cuda(), batch[3].cuda()
             loss, R, t, scale_mae = forward_registration(model, batch, loss_fn)
             cur_r_mse, cur_r_mae, cur_t_mse, cur_t_mae, cur_r_isotropic, \
