@@ -18,7 +18,7 @@ from trainer import torch_utils, vtk_utils
 
 from pcregmodel.data.cococustom import CocoDetection
 
-visualize = True
+visualize = False
 def setup_seed(seed):
     torch.backends.cudnn.deterministic = True
     torch.manual_seed(seed)
@@ -43,7 +43,7 @@ def config_params():
     parser.add_argument('--num_workers', type=int, default=0)
     parser.add_argument('--in_dim', type=int, default=3,
                         help='3 for (x, y, z) or 6 for (x, y, z, nx, ny, nz)')
-    parser.add_argument('--niters', type=int, default=20,
+    parser.add_argument('--niters', type=int, default=10,
                         help='iteration nums in one model forward')
     parser.add_argument('--registration_mode', default='similarity',
                         choices=['rigid', 'similarity'])
@@ -108,7 +108,8 @@ def forward_registration(model, batch, loss_fn):
         
         vtk_utils.change_actor_color(pp, colors)
         vtk_utils.split_show([rr, ss, pp[-1]], [rr, pp], [pp[-1], rr])
-    loss = compute_loss(ref_cloud, predictions, loss_fn) + scale_loss
+    dist_loss_weight = 10
+    loss = compute_loss(moving_target, predictions, loss_fn) * dist_loss_weight + scale_loss
     return loss, rotation, translation, scale_mae
 
 
