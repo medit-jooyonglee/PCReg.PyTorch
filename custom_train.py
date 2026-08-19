@@ -1,4 +1,5 @@
 import argparse
+import platform
 import numpy as np
 import open3d
 import os
@@ -203,8 +204,10 @@ def main():
         os.makedirs(checkpoints_path)
 
     estimate_scale = args.registration_mode == 'similarity'
-    # dataset_path = '/data1/jooyonglee/reverse_tomo/xray_panoramic/cbct_ios_dcm/'
-    dataset_path = 'E:/dataset/reverse_tomosynthesis/kaggle_xrays/cbct_ios_dcm'
+    if platform.system() == 'Linux':
+        dataset_path = '/data1/jooyonglee/reverse_tomo/xray_panoramic/cbct_ios_dcm/'
+    else:
+        dataset_path = 'E:/dataset/reverse_tomosynthesis/kaggle_xrays/cbct_ios_dcm'
     dataset_kwargs = {
         'estimate_scale': estimate_scale,
         'min_scale': args.min_scale,
@@ -292,5 +295,5 @@ def main():
 
 
 if __name__ == '__main__':
-    torch.cuda.set_device('cuda:0')
+    torch.cuda.set_device('cuda:4')
     main()
