@@ -86,7 +86,7 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         self.prepare = ConvertCoco(include_masks=include_masks, npts=npts,
                                    estimate_scale=estimate_scale,
                                    min_scale=min_scale, max_scale=max_scale,
-                                   deform_mode=deform_mode)
+                                   deform_mode=deform_mode, **kwargs)
         
     def __len__(self):
         total_len = len(self.ids) * 2
@@ -121,13 +121,15 @@ class CocoDetection(torchvision.datasets.CocoDetection):
 class ConvertCoco(object):
 
     def __init__(self, include_masks=False, npts=256, estimate_scale=True,
-                 min_scale=0.9, max_scale=1.1, deform_mode=False, **kwargs):
+                 min_scale=0.9, max_scale=1.1, deform_mode=False, 
+                 affine_transformed=True, **kwargs):
         self.include_masks = include_masks
         self.npts = npts
         self.deform_mode = deform_mode
         self.estimate_scale = estimate_scale
         self.min_scale = min_scale
         self.max_scale = max_scale
+        self.affine_transformed = affine_transformed
 
     # def 
     def __call__(self, image, target, pose='upper'):
@@ -229,27 +231,29 @@ class ConvertCoco(object):
             deform_upper_arch, new_coeff = deform_quadratic_curve(
                 this_archs,
                 *fit_upper_coeef,
-                a_ratio=0.2,
+                a_ratio=2.0,
                 b_ratio=0.00,
-                c_range=0.05,
+                c_range=0.005,
                 x_scale_ratio=0.05,
                 # x_shift_range=0,
                 x_shift_range=(20/max_len),
                 x_noise_ratio=0.0,
             )
             # vtk_utils.show([vtk_utils.create_curve_actor(this_archs), vtk_utils.create_curve_actor(deform_upper_arch)])
-            moving_points = sampler.apply_proxy_idw_deformation_points( moving_points,
+            deform_moving_points = sampler.apply_proxy_idw_deformation_points( moving_points,
                                                     this_archs,
                                                     deform_upper_arch,
 
                                                     )
         else:
+            deform_moving_points = moving_points
             pass
             # deform_upper_arch = this_archs
             # new_coeff = fit_upper_coeef
 
         moving_points = np.concatenate([moving_points, np.zeros_like(moving_points[:, :1])], axis=-1)
         target_points = np.concatenate([target_points, np.zeros_like(target_points[:, :1])], axis=-1)
+        deform_moving_points = np.concatenate([deform_moving_points, np.zeros_like(deform_moving_points[:, :1])], axis=-1)
 
         # sample the N moving points independently of the M target points:
         # moving_target_points keeps their pre-augmentation, target-frame
@@ -273,8 +277,11 @@ class ConvertCoco(object):
         select_indices = np.concatenate([all_indices[i] for i in select])
         # drop-points
         
-        moving_points = moving_points[select_indices]
-        moving_target_points = moving_points.copy()
+        moving_target_points = moving_points[select_indices]
+        
+        # moving_target_points = moving_points.copy()
+        if deform_mode:
+            moving_points = deform_moving_points[select_indices]
         # moving_target_points = np.concatenate([this_polys[i] for i in select], axis=0)
         # moving_points = np.concatenate([this_polys[i] for i in select], axis=0)
         # all_indices_concat = np.concatenate(all_indices, axis=0)
@@ -284,9 +291,7 @@ class ConvertCoco(object):
         
         # select_indices = [np]
         
-        
-
-        # pivot transform
+                    # pivot transform
         scale_range = [self.min_scale, self.max_scale] if self.estimate_scale else [1.0, 1.0]
         afm_mat = image_utils.batch_aug_params(
             {
@@ -307,7 +312,13 @@ class ConvertCoco(object):
         np.fill_diagonal(scale0, 0)
         assert np.allclose(scale0, 0, atol=tol), 'we set identical x, y,z  scaling'
         R, scale, t = rot, scale[0, 0], translate
-        moving_points = inverse_similarity_transform(moving_target_points, R, t, scale)
+        
+        
+        if self.affine_transformed:
+        
+
+
+            moving_points = inverse_similarity_transform(moving_target_points, R, t, scale)
 
         if self.estimate_scale:
             items = [target_points, moving_points, moving_target_points, R, t, scale]
@@ -911,6 +922,7 @@ if __name__ == "__main__":
         ann_file='E:/dataset/reverse_tomosynthesis/kaggle_xrays/cbct_ios_dcm/annotations.json',
         # None
         deform_mode=True,
+        affine_transformed=False,
         
         
     )

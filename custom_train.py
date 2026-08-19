@@ -18,7 +18,7 @@ from trainer import torch_utils, vtk_utils
 
 from pcregmodel.data.cococustom import CocoDetection
 
-visualize = True
+visualize = False
 def setup_seed(seed):
     torch.backends.cudnn.deterministic = True
     torch.manual_seed(seed)
@@ -43,11 +43,11 @@ def config_params():
     parser.add_argument('--num_workers', type=int, default=0)
     parser.add_argument('--in_dim', type=int, default=3,
                         help='3 for (x, y, z) or 6 for (x, y, z, nx, ny, nz)')
-    parser.add_argument('--niters', type=int, default=10,
+    parser.add_argument('--niters', type=int, default=40,
                         help='iteration nums in one model forward')
     parser.add_argument('--registration_mode', default='similarity',
                         choices=['rigid', 'similarity'])
-    parser.add_argument('--backbone', default=None,
+    parser.add_argument('--backbone', default='pointnet',
                         choices=['pointnet', 'pointnet2'])
     parser.add_argument('--min_scale', type=float, default=0.9)
     parser.add_argument('--max_scale', type=float, default=1.1)
@@ -55,7 +55,9 @@ def config_params():
     parser.add_argument('--sample_count1', type=int, default=256)
     parser.add_argument('--sample_count2', type=int, default=64)
     parser.add_argument('--resume', type=str, 
-                        default='work_dirs/models/checkpoints/test_min_rmse_error.pth')
+                        default=''
+                        # default='work_dirs/models_pointnet/checkpoints/test_min_rot_error.pth'
+                        )
     parser.add_argument('--lr', type=float, default=0.0001,
                         help='initial learning rate')
     parser.add_argument('--milestones', type=list, default=[50, 250],
@@ -104,10 +106,17 @@ def forward_registration(model, batch, loss_fn):
     if visualize:
         rr, ss, pp = torch_utils.to_numpy([ref_cloud, src_cloud, predictions], squeeze=True)
         colors = vtk_utils.get_rainbow_color_table(len(pp))
-        pp = [vtk_utils.create_points_actor(p0, invert=False ) for p0 in pp]
+        pp_actor = [vtk_utils.create_points_actor(p0, invert=False ) for p0 in pp]
         
-        vtk_utils.change_actor_color(pp, colors)
-        vtk_utils.split_show([rr, ss, pp[-1]], [rr, pp], [pp[-1], rr])
+        vtk_utils.change_actor_color(pp_actor, colors)
+        vtk_utils.split_show([rr, ss, pp_actor[-1]], [
+            vtk_utils.create_points_actor(rr, invert=False, point_size=3, color=(0, 1, 0)), 
+            pp_actor],
+            [
+            vtk_utils.create_points_actor(pp[-1], invert=False, point_size=3, color=(1, 1, 0)), 
+            vtk_utils.create_points_actor(rr, invert=False, point_size=3, color=(0, 1, 0)), 
+            # rr
+            ])
     dist_loss_weight = 10
     loss = compute_loss(moving_target, predictions, loss_fn) * dist_loss_weight + scale_loss
     return loss, rotation, translation, scale_mae
@@ -307,6 +316,76 @@ def main():
             test_min_rot_error = test_rot_error
         scheduler.step()
 
+
+
+
+
+def compute_scores_tensors_pair(tensor1, tensor2, beta=0.1, method='smoothl1'):
+    """
+
+    Parameters
+    ----------
+    tensor1 : (B, N, 6)
+    tensor2 : (B, N, 6)
+
+    Returns
+    -------
+        float scalars average
+
+    """
+    assert tensor1.shape[-1] == tensor2.shape[-1] == 6
+    # torch.cdist(torch.randn(10, 3), torch.randn(20, 3), )
+    # dist = cdist(tensor1[:, :3], tensor2[:, :3])
+    pts1, normals1 = tensor1[..., :3], tensor1[..., 3:]
+    pts2, normals2 = tensor2[..., :3], tensor2[..., 3:]
+    # dist = torch.cdist(pts1, pts2, p=2.0)
+    if method == 'smoothl1':
+        diff = torch.abs(pts1 - pts2)
+        dist = torch.where(diff < beta, 0.5 * diff ** 2 / beta, diff - 0.5 * beta)
+    elif method == 'l2':
+        dist = torch.sum((pts1 - pts2) ** 2, dim=-1)
+
+    # diff = torch.abs(pts1 - pts2)
+    # dist = torch.where(diff < beta, 0.5 * diff ** 2 / beta, diff - 0.5 * beta)
+
+    innerdot = 1 - torch.sum(normals1 * normals2, dim=-1)
+
+    return dist.mean() + innerdot.mean()
+
+# def smoot
+class PairwiseSmoothL1Loss(nn.Module):
+    def __init__(self, **kwargs):
+        super(PairwiseSmoothL1Loss, self).__init__()
+
+        self.beta = kwargs.get('beta', 0.1)
+        self.dim = kwargs.get('dim', 3)
+        self.pair_metric = kwargs.get('method', 'smoothl1')
+
+
+    def forward(self, predicted, target):
+        """
+        Args:
+            predicted: (B, N, 3)
+            target: (B, N, 3)
+        Returns:
+            loss: Scalar Smooth L1 loss
+        """
+        predicted = predicted[..., :self.dim]
+        target = target[..., :self.dim]
+        if self.pair_metric == 'smoothl1':
+            assert predicted.shape == target.shape, "Predicted and target must have the same shape"
+            diff = torch.abs(predicted - target)
+            loss = torch.where(diff < self.beta, 0.5 * diff ** 2 / self.beta, diff - 0.5 * self.beta)
+            loss = torch.mean(loss)
+        elif self.pair_metric == 'innerdot_smoothl1':
+            loss = compute_scores_tensors_pair(predicted, target, beta=self.beta, method='smoothl1')
+        elif self.pair_metric == 'innerdot_l2':
+            loss = compute_scores_tensors_pair(predicted, target, beta=self.beta, method='l2')
+        else:
+            raise NotImplementedError
+
+        return loss
+    
 
 if __name__ == '__main__':
     device = 'cuda:4'
