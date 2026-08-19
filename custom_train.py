@@ -18,6 +18,7 @@ from trainer import torch_utils, vtk_utils
 
 from pcregmodel.data.cococustom import CocoDetection
 
+visualize = True
 def setup_seed(seed):
     torch.backends.cudnn.deterministic = True
     torch.manual_seed(seed)
@@ -42,7 +43,7 @@ def config_params():
     parser.add_argument('--num_workers', type=int, default=0)
     parser.add_argument('--in_dim', type=int, default=3,
                         help='3 for (x, y, z) or 6 for (x, y, z, nx, ny, nz)')
-    parser.add_argument('--niters', type=int, default=8,
+    parser.add_argument('--niters', type=int, default=20,
                         help='iteration nums in one model forward')
     parser.add_argument('--registration_mode', default='similarity',
                         choices=['rigid', 'similarity'])
@@ -81,6 +82,7 @@ def compute_loss(moving_target, pred_ref_clouds, loss_fn):
     return torch.sum(torch.stack(losses))
 
 
+
 def forward_registration(model, batch, loss_fn):
     ref_cloud, src_cloud, moving_target, gtR, gtt = \
         [value.cuda() for value in batch[:5]]
@@ -98,10 +100,15 @@ def forward_registration(model, batch, loss_fn):
             torch.log(scale), torch.log(gt_scale)
         )
         scale_mae = torch.abs(scale - gt_scale).mean().item()
-    # predictions are the transformed src cloud (N pts, same order as
-    # src/moving_target); ref_cloud's M points are an independently sampled
-    # reference-cloud input to the model, not index-aligned with predictions.
-    loss = compute_loss(moving_target, predictions, loss_fn) + scale_loss
+        
+    if visualize:
+        rr, ss, pp = torch_utils.to_numpy([ref_cloud, src_cloud, predictions], squeeze=True)
+        colors = vtk_utils.get_rainbow_color_table(len(pp))
+        pp = [vtk_utils.create_points_actor(p0, invert=False ) for p0 in pp]
+        
+        vtk_utils.change_actor_color(pp, colors)
+        vtk_utils.split_show([rr, ss, pp[-1]], [rr, pp], [pp[-1], rr])
+    loss = compute_loss(ref_cloud, predictions, loss_fn) + scale_loss
     return loss, rotation, translation, scale_mae
 
 
@@ -301,5 +308,10 @@ def main():
 
 
 if __name__ == '__main__':
-    torch.cuda.set_device('cuda:4')
+    device = 'cuda:4'
+    if torch.cuda.device_count() > 1:
+        # torch.cuda.set_device(device)
+        torch.cuda.set_device('cuda:4')
+    elif torch.cuda.device_count() == 1:
+        torch.cuda.set_device('cuda:0')
     main()

@@ -215,6 +215,7 @@ class ConvertCoco(object):
         moving_points = target_points.copy()
         # fixed center of deform 
         
+        
 
         deform_mode = False
         if deform_mode:
@@ -247,18 +248,49 @@ class ConvertCoco(object):
         # moving_target_points keeps their pre-augmentation, target-frame
         # position for the loss (index-aligned with moving_points), while
         # target_points (M pts) stays only the model's reference-cloud input.
-        moving_target_points = random_select_points(moving_points, self.npts)
+        # moving_target_points = random_select_points(moving_points, int(target_points.shape[0] * 0.8))
+        
+        # teeth-by-teeth drop
+        args = [i for i in range(len(this_polys))]
+        if np.random.uniform(0, 1) < 0.8:
+            select = np.sort(np.random.choice(args, int(len(args)*0.8), replace=False))
+        else:
+            select = args
+        # select = np.sort(np.random.choic?e(args, int(len(args)*0.8), replace=False))
+        # all_indices = [np.arange(len(this_polys[i])) for i in range(len(this_polys))]
+        all_indices = []
+        start = 0
+        for i in range(len(this_polys)):
+            all_indices.append(start + np.arange(len(this_polys[i])))
+            start += len(this_polys[i])
+        select_indices = np.concatenate([all_indices[i] for i in select])
+        # drop-points
+        
+        moving_points = moving_points[select_indices]
+        moving_target_points = moving_points.copy()
+        # moving_target_points = np.concatenate([this_polys[i] for i in select], axis=0)
+        # moving_points = np.concatenate([this_polys[i] for i in select], axis=0)
+        # all_indices_concat = np.concatenate(all_indices, axis=0)
+        
+        # all_indices_concat = 
+        # select_indices = [np.arange(len(this_polys[i])) for i in select]
+        
+        # select_indices = [np]
+        
+        
 
         # pivot transform
         scale_range = [self.min_scale, self.max_scale] if self.estimate_scale else [1.0, 1.0]
         afm_mat = image_utils.batch_aug_params(
             {
-                'rotate': [np.pi/15, 0, 0 ],
-                'translate': [0.05, 0.05 , 0.0],
+                # 10 degree??
+                'rotate': [np.pi/20, 0, 0 ],
+                'translate': [0.005, 0.005 , 0.0],
                 'scale': scale_range,
             },
             1,
             [0, 0, 0],
+            pivot_scale=True,
         )
 
         rot, scale, translate = geometry_numpy.decompose_complete_matrix(afm_mat[0], first_scale=True)
@@ -868,9 +900,9 @@ def convert_coco_poly_to_mask(segmentations, height, width):
 
 if __name__ == "__main__":
     dataset = CocoDetection(
-        'E:/dataset/reverse_tomosynthesis/kaggle_xrays/cbct_ios_dcm',
-        'E:/dataset/reverse_tomosynthesis/kaggle_xrays/cbct_ios_dcm/annotations.JSON',
-        None
+        img_folder='E:/dataset/reverse_tomosynthesis/kaggle_xrays/cbct_ios_dcm',
+        ann_file='E:/dataset/reverse_tomosynthesis/kaggle_xrays/cbct_ios_dcm/annotations.json',
+        # None
         
         
     )
@@ -883,19 +915,26 @@ if __name__ == "__main__":
         tgt, src, moving_target, R, t, scale = item
         
         fit_src = similarity_transform(src, R, t, scale)
-        vtk_utils.split_show([
-            src, tgt
-        ], [
-            tgt, src
-        ])
+        # vtk_utils.split_show([
+        #     src, tgt
+        # ], [
+        #     tgt, src
+        # ])
         print(torch_utils.get_shape(item))
         
         tgt, src, moving_target, R, t, scale = item
         
         fit_src = similarity_transform(src, R, t, scale)
         vtk_utils.split_show([
-            src, tgt
+            vtk_utils.create_points_actor(tgt, point_size=5, color=(0, 1, 0)),
+            vtk_utils.create_points_actor(src, point_size=2, color=(1, 1, 0)),
         ], [
-            tgt, fit_src
+            vtk_utils.create_points_actor(tgt, point_size=5, color=(0, 1, 0)),
+            vtk_utils.create_points_actor(fit_src, point_size=2, color=(1, 1, 0)),
+            
+        ], [
+            vtk_utils.create_points_actor(moving_target, point_size=5, color=(0, 1, 0)),
+            vtk_utils.create_points_actor(fit_src, point_size=2, color=(1, 1, 0)),
+            
         ])
         print(torch_utils.get_shape(item))

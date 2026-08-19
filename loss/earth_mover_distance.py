@@ -1,3 +1,4 @@
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -5,18 +6,19 @@ import copy
 
 
 def sinkhorn_transport(cost: torch.Tensor, eps: float = 0.01, max_iters: int = 20) -> torch.Tensor:
-	"""Entropic-regularized optimal transport plan (Sinkhorn) on the
-	Birkhoff polytope (row/col sums of 1, not 1/N), solved in the log domain
-	for numerical stability. As eps -> 0 this plan approaches the optimal
-	one-to-one assignment between the two point sets, so `sum(plan * cost)`
-	is directly comparable to a bipartite-matching EMD (a sum over N matched
-	pairs), not an average-cost-per-unit-probability-mass.
+	"""Entropic-regularized optimal transport plan (Sinkhorn), solved in the
+	log domain for numerical stability. Marginals are uniform probability
+	distributions (row masses 1/N, column masses 1/M, each summing to 1
+	total), i.e. a balanced-mass transport problem, so N and M need not be
+	equal. As eps -> 0 this plan approaches the optimal assignment between
+	the two point sets, matching each point's 1/N (resp. 1/M) mass to the
+	other cloud.
 
 	cost: (B, N, M) pairwise cost matrix.
 	"""
 	B, N, M = cost.shape
-	log_mu = cost.new_zeros((B, N))
-	log_nu = cost.new_zeros((B, M))
+	log_mu = cost.new_full((B, N), -math.log(N))
+	log_nu = cost.new_full((B, M), -math.log(M))
 	u = torch.zeros_like(log_mu)
 	v = torch.zeros_like(log_nu)
 
@@ -31,11 +33,10 @@ def sinkhorn_transport(cost: torch.Tensor, eps: float = 0.01, max_iters: int = 2
 
 
 def emd(template: torch.Tensor, source: torch.Tensor, eps: float = 0.01, max_iters: int = 20):
-	"""Differentiable approximate Earth Mover's Distance between two equally
-	sized point sets, computed purely in PyTorch (no compiled CUDA extension)
-	via entropic optimal transport (Sinkhorn).
+	"""Differentiable approximate Earth Mover's Distance between two point
+	sets of possibly different sizes, computed purely in PyTorch (no
+	compiled CUDA extension) via entropic optimal transport (Sinkhorn).
 	"""
-	assert template.size(1) == source.size(1), 'template and source must have the same number of points'
 	cost = torch.cdist(template, source, p=2)
 	# The transport plan is solved without tracking gradients through the
 	# iterations: at Sinkhorn's fixed point, the plan is the argmin of the
@@ -45,8 +46,12 @@ def emd(template: torch.Tensor, source: torch.Tensor, eps: float = 0.01, max_ite
 	# instead is what makes naive unrolled Sinkhorn blow up in memory/time.
 	with torch.no_grad():
 		plan = sinkhorn_transport(cost, eps=eps, max_iters=max_iters)
+	# plan's total mass is already 1 (uniform 1/N, 1/M marginals), so this
+	# is already the mass-weighted average matched cost -- no extra
+	# normalization by point count is needed (and none would be well-defined
+	# when N != M).
 	emd_cost = torch.sum(plan * cost, dim=(-2, -1))
-	return emd_cost.mean() / template.size(1)
+	return emd_cost.mean()
 
 
 class EMDLosspy(nn.Module):

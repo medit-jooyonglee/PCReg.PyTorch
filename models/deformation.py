@@ -64,6 +64,12 @@ class CoarseDeformationNet(nn.Module):
         )
         nn.init.zeros_(self.field_head[-1].weight)
         nn.init.zeros_(self.field_head[-1].bias)
+        
+        self.exported_ = False
+        
+    def export(self):
+        self.exported_ = True
+        # self.encoder.exported_ = True
 
     def make_controls(self, points):
         batch_size = points.shape[0]
@@ -151,14 +157,17 @@ class CoarseDeformationNet(nn.Module):
             ), dim=-1)
         else:
             warped_source = warped_points
-        return {
-            'warped_source': warped_source,
-            'dense_offsets': dense_offsets,
-            'controls': controls,
-            'control_offsets': control_offsets,
-            'control_confidence': confidence,
-            'control_radius': radius,
-        }
+        if self.exported_:
+            return warped_source, dense_offsets, controls, control_offsets, confidence, radius
+        else:
+            return {
+                'warped_source': warped_source,
+                'dense_offsets': dense_offsets,
+                'controls': controls,
+                'control_offsets': control_offsets,
+                'control_confidence': confidence,
+                'control_radius': radius,
+            }
 
 
 class SimilarityDeformationRegistration(nn.Module):
