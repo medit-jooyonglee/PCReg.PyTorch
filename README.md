@@ -102,3 +102,44 @@ A Simple Point Cloud Registration Pipeline based on Deep Learning. Detailed Info
 ## Acknowledgements
 
 Thanks for the open source [code](https://github.com/vinits5/pcrnet_pytorch) for helping me to train the Point Cloud Registration Network successfully.
+
+## PointNet++, similarity and coarse deformation
+
+The original `Benchmark` remains checkpoint-compatible and accepts
+`backbone='pointnet2'` as an option. New registration code can use
+`IterativeSimilarityBenchmark`, whose default PointNet++ backbone predicts
+rotation, translation, and a positive isotropic scale:
+
+```python
+from models import (IterativeSimilarityBenchmark, CoarseDeformationNet,
+                    SimilarityDeformationRegistration)
+
+similarity = IterativeSimilarityBenchmark(in_dim=6, niters=4)
+deformation = CoarseDeformationNet(
+    in_dim=6,
+    control_mode='anchors',  # input_seed, fixed_grid, or anchors
+    num_controls=96,
+    anchor_scales=(0.08, 0.16, 0.32),
+)
+model = SimilarityDeformationRegistration(similarity, deformation)
+prediction = model(source_bcn, target_bcm)
+```
+
+`prediction['warped_source']` is `(B,N,C)` and
+`prediction['dense_offsets']` is the `(B,N,3)` deformation field. Use
+`loss.coarse_deformation_loss` for trimmed-Chamfer data fitting plus field
+smoothness and magnitude regularization. Trimming permits partial source/target
+differences without forcing every outlier to match.
+
+Similarity training on the existing custom dataset is available with:
+
+```bash
+python custom_train.py --root DATASET --train_npts 1024 \
+  --registration_mode similarity --backbone pointnet2 \
+  --min_scale 0.9 --max_scale 1.1
+```
+
+For stable training, train similarity first, train deformation on roughly
+aligned source/target pairs second, and then fine-tune both with a lower learning
+rate. Non-rigidly warped normals are retained as input attributes; recompute
+mesh normals after deformation when accurate surface normals are required.

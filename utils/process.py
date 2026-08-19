@@ -62,11 +62,33 @@ def generate_random_tranlation_vector(range1=-1, range2=1):
     return tranlation_vector
 
 
+def generate_random_scale(min_scale=0.9, max_scale=1.1):
+    """Sample a positive isotropic scale uniformly in log space."""
+    if min_scale <= 0 or max_scale < min_scale:
+        raise ValueError('scales must satisfy 0 < min_scale <= max_scale')
+    return np.float32(np.exp(np.random.uniform(np.log(min_scale),
+                                               np.log(max_scale))))
+
+
 def transform(pc, R, t=None):
     pc = np.dot(pc, R.T)
     if t is not None:
         pc = pc + t
     return pc
+
+
+def similarity_transform(pc, R, t=None, scale=1.0):
+    """Apply isotropic scale, rotation and translation to numpy points."""
+    result = scale * np.dot(pc, R.T)
+    if t is not None:
+        result = result + t
+    return result
+
+
+def inverse_similarity_transform(pc, R, t, scale):
+    if scale <= 0:
+        raise ValueError('scale must be positive')
+    return np.dot(pc - t, R) / scale
 
 
 def batch_transform(batch_pc, batch_R, batch_t=None):
@@ -81,6 +103,72 @@ def batch_transform(batch_pc, batch_R, batch_t=None):
     if batch_t is not None:
         transformed_pc = transformed_pc + torch.unsqueeze(batch_t, 1)
     return transformed_pc
+
+
+def batch_similarity_transform(batch_pc, batch_R, batch_t=None,
+                               batch_scale=None):
+    """Apply batched ``p -> scale * R @ p + t`` to (B,N,3) points."""
+    transformed = torch.matmul(batch_pc, batch_R.transpose(1, 2).contiguous())
+    if batch_scale is not None:
+        transformed = transformed * batch_scale.reshape(-1, 1, 1)
+    if batch_t is not None:
+        transformed = transformed + batch_t.unsqueeze(1)
+    return transformed
+
+
+def compose_similarity(rotation1, translation1, scale1,
+                       rotation2, translation2, scale2):
+    """Compose T2(T1(p)) for batched similarity transforms."""
+    scale1 = scale1.reshape(-1)
+    scale2 = scale2.reshape(-1)
+    rotation = torch.matmul(rotation2, rotation1)
+    translation = (
+        scale2[:, None, None]
+        * torch.matmul(rotation2, translation1.unsqueeze(-1))
+    ).squeeze(-1) + translation2
+    return rotation, translation, scale2 * scale1
+
+
+def interpolate_control_offsets(points, controls, offsets, radius=None,
+                                control_weights=None, neighbor_count=4,
+                                eps=1e-8):
+    """Interpolate sparse control offsets to all source points."""
+    if controls.shape[:2] != offsets.shape[:2]:
+        raise ValueError('controls and offsets must share (B,K)')
+    count = min(neighbor_count, controls.shape[1])
+    distances = torch.cdist(points, controls) ** 2
+    nearest_distance, nearest_index = distances.topk(
+        count, dim=-1, largest=False
+    )
+    nearest_offsets = torch.gather(
+        offsets.unsqueeze(1).expand(-1, points.shape[1], -1, -1), 2,
+        nearest_index.unsqueeze(-1).expand(-1, -1, -1, 3),
+    )
+    if radius is None:
+        weights = (nearest_distance + eps).rsqrt()
+    else:
+        if not torch.is_tensor(radius):
+            radius = points.new_tensor(radius)
+        if radius.dim() == 0:
+            nearest_radius = radius
+        else:
+            radius = radius.reshape(radius.shape[0], -1)
+            nearest_radius = torch.gather(
+                radius.unsqueeze(1).expand(-1, points.shape[1], -1), 2,
+                nearest_index,
+            )
+        weights = torch.exp(
+            -nearest_distance / (2.0 * nearest_radius ** 2 + eps)
+        )
+    if control_weights is not None:
+        control_weights = control_weights.reshape(control_weights.shape[0], -1)
+        nearest_confidence = torch.gather(
+            control_weights.unsqueeze(1).expand(-1, points.shape[1], -1), 2,
+            nearest_index,
+        )
+        weights = weights * nearest_confidence.clamp_min(eps)
+    weights = weights / weights.sum(-1, keepdim=True).clamp_min(eps)
+    return (nearest_offsets * weights.unsqueeze(-1)).sum(2)
 
 
 # The transformation between unit quaternion and rotation matrix is referenced to
@@ -111,7 +199,7 @@ def batch_quat2mat(batch_quat):
                  batch_quat[:, 3]
     device = batch_quat.device
     B = batch_quat.size()[0]
-    R = torch.zeros(dtype=torch.float, size=(B, 3, 3)).to(device)
+    R = torch.zeros(dtype=batch_quat.dtype, size=(B, 3, 3), device=device)
     R[:, 0, 0] = 1 - 2 * y * y - 2 * z * z
     R[:, 0, 1] = 2 * x * y - 2 * z * w
     R[:, 0, 2] = 2 * x * z + 2 * y * w

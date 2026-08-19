@@ -1,6 +1,8 @@
+import os
 from setuptools import setup
 from torch.utils.cpp_extension import BuildExtension, CUDAExtension
 
+this_dir = os.path.dirname(os.path.abspath(__file__))
 
 setup(
 	name='PyTorch EMD',
@@ -16,7 +18,7 @@ setup(
 				'pkg/src/emd.cpp',
 				'pkg/src/cuda/emd.cu',
 			],
-			include_dirs=['pkg/include'],
+			include_dirs=[os.path.join(this_dir, 'pkg/include')],
 		),
 	],
 	packages=[
