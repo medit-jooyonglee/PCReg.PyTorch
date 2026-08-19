@@ -68,6 +68,10 @@ class CocoDetection(torchvision.datasets.CocoDetection):
     def __init__(self, *,
                  img_folder='', ann_file='', include_masks=True,
                  train=True,
+                 npts=256,
+                 estimate_scale=True,
+                 min_scale=0.9,
+                 max_scale=1.1,
                  **kwargs):
         super(CocoDetection, self).__init__(img_folder, ann_file)
         # internal-splits
@@ -76,7 +80,9 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         self.split = 0.8 if train else 0.2
         # self._transforms = transforms
         self.include_masks = include_masks
-        self.prepare = ConvertCoco(include_masks=include_masks)
+        self.prepare = ConvertCoco(include_masks=include_masks, npts=npts,
+                                   estimate_scale=estimate_scale,
+                                   min_scale=min_scale, max_scale=max_scale)
         
     def __len__(self):
         total_len = len(self.ids) * 2
@@ -110,8 +116,13 @@ class CocoDetection(torchvision.datasets.CocoDetection):
 
 class ConvertCoco(object):
 
-    def __init__(self, include_masks=False):
+    def __init__(self, include_masks=False, npts=256, estimate_scale=True,
+                 min_scale=0.9, max_scale=1.1):
         self.include_masks = include_masks
+        self.npts = npts
+        self.estimate_scale = estimate_scale
+        self.min_scale = min_scale
+        self.max_scale = max_scale
 
     # def 
     def __call__(self, image, target, pose='upper'):
@@ -206,9 +217,8 @@ class ConvertCoco(object):
         
 
         deform_mode = False
-        en_similarity_transform = True
         if deform_mode:
-            
+
             deform_upper_arch, new_coeff = deform_quadratic_curve(
                 this_archs,
                 *fit_upper_coeef,
@@ -219,59 +229,56 @@ class ConvertCoco(object):
                 x_shift_range=2.0,
                 x_noise_ratio=0.0,
             )
-                    
-            moving_points = sampler.apply_proxy_idw_deformation_points( moving_points, 
+
+            moving_points = sampler.apply_proxy_idw_deformation_points( moving_points,
                                                     this_archs,
                                                     deform_upper_arch,
-                                                    
+
                                                     )
         else:
             pass
             # deform_upper_arch = this_archs
             # new_coeff = fit_upper_coeef
-            
+
         moving_points = np.concatenate([moving_points, np.zeros_like(moving_points[:, :1])], axis=-1)
         target_points = np.concatenate([target_points, np.zeros_like(target_points[:, :1])], axis=-1)
-        if en_similarity_transform:
-        
-            # pivot ransfomr transform
-            
-            afm_mat = image_utils.batch_aug_params(
-                {
-                    'rotate': [np.pi/15, 0, 0 ],
-                    'translate': [0.05, 0.05 , 0.0],
-                    'scale': [0.95, 1.05],
-                },
-                1,
-                [0, 0, 0],
-            )
-            
-            # make2d-points-> 3d points
-            
-            # moving_points = vtk_utils.apply_transform(moving_points, afm_mat[0])
-            
-            # geometry_numpy.decompose_complete_matrix()
-            
-            
-            rot, scale, translate =  geometry_numpy.decompose_complete_matrix(afm_mat[0], first_scale=True)
-                
-            tol = 1e-6
-            scale0 = scale.copy()
-            np.fill_diagonal(scale0, 0)
-            assert np.allclose(scale0, 0, atol=tol), 'we set identical x, y,z  scaling'
-            # TODO: converting. 
-            R, scale, t = rot, scale[0, 0], translate
-            transed_moving_points = inverse_similarity_transform(moving_points, R, t, scale)
-            # restored = similarity_transform(transed_moving_points, R, t, scale)
-            moving_points = transed_moving_points
-        else:
-            raise NotImplementedError("Only similarity transform is implemented for moving points.")
-            # pass
-            # moving_points =  np.concatenate([moving_points, np.zeros_like(moving_points[:, :1])], axis=-1)
-        
-        items = [target_points, moving_points, R, t, scale]
-        target_points, moving_points, R, t, scale = [v.astype(np.float32) for v in items]
-        return target_points, moving_points, R, t, scale
+
+        # sample the N moving points independently of the M target points:
+        # moving_target_points keeps their pre-augmentation, target-frame
+        # position for the loss (index-aligned with moving_points), while
+        # target_points (M pts) stays only the model's reference-cloud input.
+        moving_target_points = random_select_points(moving_points, self.npts)
+
+        # pivot transform
+        scale_range = [self.min_scale, self.max_scale] if self.estimate_scale else [1.0, 1.0]
+        afm_mat = image_utils.batch_aug_params(
+            {
+                'rotate': [np.pi/15, 0, 0 ],
+                'translate': [0.05, 0.05 , 0.0],
+                'scale': scale_range,
+            },
+            1,
+            [0, 0, 0],
+        )
+
+        rot, scale, translate = geometry_numpy.decompose_complete_matrix(afm_mat[0], first_scale=True)
+
+        tol = 1e-6
+        scale0 = scale.copy()
+        np.fill_diagonal(scale0, 0)
+        assert np.allclose(scale0, 0, atol=tol), 'we set identical x, y,z  scaling'
+        R, scale, t = rot, scale[0, 0], translate
+        moving_points = inverse_similarity_transform(moving_target_points, R, t, scale)
+
+        if self.estimate_scale:
+            items = [target_points, moving_points, moving_target_points, R, t, scale]
+            target_points, moving_points, moving_target_points, R, t, scale = \
+                [v.astype(np.float32) for v in items]
+            return target_points, moving_points, moving_target_points, R, t, scale
+        items = [target_points, moving_points, moving_target_points, R, t]
+        target_points, moving_points, moving_target_points, R, t = \
+            [v.astype(np.float32) for v in items]
+        return target_points, moving_points, moving_target_points, R, t
         
         # vtk_utils.show([this_polys_concat, padding_pts1, vtk_utils.get_axes(200)])
         # # geometry_numpy.decompose_matrix(res[0])
@@ -873,7 +880,7 @@ if __name__ == "__main__":
     
     for _ in range(len(dataset)):
         item = dataset[np.random.randint(len(dataset))]
-        tgt, src, R, t, scale = item
+        tgt, src, moving_target, R, t, scale = item
         
         fit_src = similarity_transform(src, R, t, scale)
         vtk_utils.split_show([
@@ -883,7 +890,7 @@ if __name__ == "__main__":
         ])
         print(torch_utils.get_shape(item))
         
-        tgt, src, R, t, scale = item
+        tgt, src, moving_target, R, t, scale = item
         
         fit_src = similarity_transform(src, R, t, scale)
         vtk_utils.split_show([
