@@ -19,6 +19,7 @@ from trainer import torch_utils, vtk_utils
 from pcregmodel.data.cococustom import CocoDetection
 
 visualize = False
+
 def setup_seed(seed):
     torch.backends.cudnn.deterministic = True
     torch.manual_seed(seed)
@@ -55,8 +56,8 @@ def config_params():
     parser.add_argument('--sample_count1', type=int, default=256)
     parser.add_argument('--sample_count2', type=int, default=64)
     parser.add_argument('--resume', type=str, 
-                        default=''
-                        # default='work_dirs/models_pointnet/checkpoints/test_min_rot_error.pth'
+                        # default=''
+                        default='work_dirs/models_pointnet/checkpoints/test_min_loss.pth'
                         )
     parser.add_argument('--lr', type=float, default=0.0001,
                         help='initial learning rate')
@@ -73,19 +74,28 @@ def config_params():
     return args
 
 
-def compute_loss(moving_target, pred_ref_clouds, loss_fn):
+normal_loss_weight = 1.0
+
+
+def compute_loss(moving_target, pred_ref_clouds, loss_fn, normal_loss_fn=None):
     losses = []
     discount_factor = 0.5
     prediction_count = len(pred_ref_clouds)
+    has_normals = normal_loss_fn is not None and moving_target.shape[-1] >= 6
     for i in range(prediction_count):
         loss = loss_fn(moving_target[..., :3].contiguous(),
                        pred_ref_clouds[i][..., :3].contiguous())
+        if has_normals:
+            loss = loss + normal_loss_weight * normal_loss_fn(
+                pred_ref_clouds[i][..., 3:6].contiguous(),
+                moving_target[..., 3:6].contiguous(),
+            )
         losses.append(discount_factor**(prediction_count - i)*loss)
     return torch.sum(torch.stack(losses))
 
 
 
-def forward_registration(model, batch, loss_fn):
+def forward_registration(model, batch, loss_fn, normal_loss_fn=None):
     ref_cloud, src_cloud, moving_target, gtR, gtt = \
         [value.cuda() for value in batch[:5]]
     output = model(src_cloud.permute(0, 2, 1).contiguous(),
@@ -118,12 +128,12 @@ def forward_registration(model, batch, loss_fn):
             # rr
             ])
     dist_loss_weight = 10
-    loss = compute_loss(moving_target, predictions, loss_fn) * dist_loss_weight + scale_loss
+    loss = compute_loss(moving_target, predictions, loss_fn, normal_loss_fn) * dist_loss_weight + scale_loss
     return loss, rotation, translation, scale_mae
 
 
 @time_calc
-def train_one_epoch(train_loader, model, loss_fn, optimizer):
+def train_one_epoch(train_loader, model, loss_fn, optimizer, normal_loss_fn=None):
     losses = []
     r_mse, r_mae, t_mse, t_mae, r_isotropic, t_isotropic = [], [], [], [], [], []
     scale_maes = []
@@ -137,7 +147,7 @@ def train_one_epoch(train_loader, model, loss_fn, optimizer):
             
         gtR, gtt = batch[3].cuda(), batch[4].cuda()
         optimizer.zero_grad()
-        loss, R, t, scale_mae = forward_registration(model, batch, loss_fn)
+        loss, R, t, scale_mae = forward_registration(model, batch, loss_fn, normal_loss_fn)
         loss.backward()
         optimizer.step()
 
@@ -169,7 +179,7 @@ def train_one_epoch(train_loader, model, loss_fn, optimizer):
 
 
 @time_calc
-def test_one_epoch(test_loader, model, loss_fn):
+def test_one_epoch(test_loader, model, loss_fn, normal_loss_fn=None):
     model.eval()
     losses = []
     r_mse, r_mae, t_mse, t_mae, r_isotropic, t_isotropic = [], [], [], [], [], []
@@ -177,9 +187,9 @@ def test_one_epoch(test_loader, model, loss_fn):
     with torch.no_grad():
         scale_maes = []
         for batch in tqdm(test_loader):
-            
+
             gtR, gtt = batch[3].cuda(), batch[4].cuda()
-            loss, R, t, scale_mae = forward_registration(model, batch, loss_fn)
+            loss, R, t, scale_mae = forward_registration(model, batch, loss_fn, normal_loss_fn)
             cur_r_mse, cur_r_mae, cur_t_mse, cur_t_mae, cur_r_isotropic, \
             cur_t_isotropic = compute_metrics(R, t, gtR, gtt)
 
@@ -234,9 +244,12 @@ def main():
         'max_scale': args.max_scale,
         'img_folder': dataset_path,
         'ann_file': os.path.join(dataset_path, 'annotations.json'),
+        'in_dim': args.in_dim,
     }
-    train_set = CocoDetection(root=args.root, npts=args.train_npts, train=True, **dataset_kwargs)
-    test_set = CocoDetection(root=args.root, npts=args.train_npts, train=False, **dataset_kwargs)
+    # InnDataset = CustomData
+    InnDataset = CocoDetection
+    train_set = InnDataset(root=args.root, npts=args.train_npts, train=True, **dataset_kwargs)
+    test_set = InnDataset(root=args.root, npts=args.train_npts, train=False, **dataset_kwargs)
     train_loader = DataLoader(train_set, batch_size=args.batchsize,
                               shuffle=True, num_workers=args.num_workers)
     test_loader = DataLoader(test_set, batch_size=args.batchsize, shuffle=False,
@@ -261,6 +274,7 @@ def main():
     # here, unlike EMD/Chamfer which solve the harder unordered-set case.
     loss_fn = nn.MSELoss()
     loss_fn = loss_fn.cuda()
+    normal_loss_fn = PairwiseSmoothL1Loss(dim=3).cuda() if args.in_dim >= 6 else None
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
                                                      milestones=args.milestones,
@@ -282,9 +296,9 @@ def main():
         float('inf'), float('inf'), float('inf')
     for epoch in range(args.epoches):
         print('=' * 20, epoch + 1, '=' * 20)
-        train_results = train_one_epoch(train_loader, model, loss_fn, optimizer)
+        train_results = train_one_epoch(train_loader, model, loss_fn, optimizer, normal_loss_fn)
         print_train_info(train_results)
-        test_results = test_one_epoch(test_loader, model, loss_fn)
+        test_results = test_one_epoch(test_loader, model, loss_fn, normal_loss_fn)
         print_train_info(test_results)
 
         if epoch % args.saved_frequency == 0:

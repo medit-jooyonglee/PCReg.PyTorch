@@ -74,6 +74,7 @@ class CocoDetection(torchvision.datasets.CocoDetection):
                  min_scale=0.9,
                  max_scale=1.1,
                  deform_mode=False,
+                 in_dim=3,
                  **kwargs):
         super(CocoDetection, self).__init__(img_folder, ann_file)
         # internal-splits
@@ -86,6 +87,7 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         self.prepare = ConvertCoco(include_masks=include_masks, npts=npts,
                                    estimate_scale=estimate_scale,
                                    min_scale=min_scale, max_scale=max_scale,
+                                   in_dim=in_dim,
                                    deform_mode=deform_mode, **kwargs)
         
     def __len__(self):
