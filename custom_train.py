@@ -1,4 +1,5 @@
 import argparse
+import json
 import platform
 import numpy as np
 import open3d
@@ -13,7 +14,7 @@ from data import CustomData
 from models import IterativeBenchmark, IterativeSimilarityBenchmark
 from metrics import compute_metrics, summary_metrics, print_train_info
 from utils import time_calc
-from trainer import torch_utils, vtk_utils, get_logger
+from trainer import torch_utils, vtk_utils, get_logger, time_strftime
 # from pc
 
 from pcregmodel.data.cococustom import CocoDetection
@@ -58,8 +59,8 @@ def config_params():
     parser.add_argument('--sample_count1', type=int, default=256)
     parser.add_argument('--sample_count2', type=int, default=64)
     parser.add_argument('--resume', type=str, 
-                        # default=''
-                        default='work_dirs/models_pointnet/checkpoints/test_min_loss.pth'
+                        default=''
+                        # default='work_dirs/models_pointnet/checkpoints/test_min_loss.pth'
                         )
     parser.add_argument('--lr', type=float, default=0.0001,
                         help='initial learning rate')
@@ -226,6 +227,13 @@ def test_one_epoch(test_loader, model, loss_fn, normal_loss_fn=None):
     return results
 
 
+def save_args(args, saved_path):
+    args_dict = vars(args)
+    args_json_path = os.path.join(saved_path, f'args_{time_strftime()}.json')
+    with open(args_json_path, 'w') as f:
+        json.dump(args_dict, f, indent=4)
+        
+        
 def main():
     args = config_params()
     logger = get_logger()
@@ -234,6 +242,9 @@ def main():
     setup_seed(args.seed)
     if not os.path.exists(args.saved_path):
         os.makedirs(args.saved_path)
+        
+    save_args(args, args.saved_path)
+    
     summary_path = os.path.join(args.saved_path, 'summary')
     if not os.path.exists(summary_path):
         os.makedirs(summary_path)
