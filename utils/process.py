@@ -153,7 +153,10 @@ def project_geometry(pc, coord_dim, has_normal, source_dim=3):
         parts.append(normals[..., :coord_dim])
     if others.shape[-1]:
         parts.append(others)
-    return torch.cat(parts, dim=-1)
+    if isinstance(pc, torch.Tensor):
+        return torch.cat(parts, dim=-1)
+    elif isinstance(pc, np.ndarray):
+        return np.concatenate(parts, axis=-1)
 
 
 def project_pose(rotation, translation, coord_dim):
@@ -163,8 +166,11 @@ def project_pose(rotation, translation, coord_dim):
     """
     if rotation.shape[-1] == coord_dim:
         return rotation, translation
-    return rotation[..., :coord_dim, :coord_dim].contiguous(), \
-        translation[..., :coord_dim].contiguous()
+    if isinstance(rotation, torch.Tensor):
+        return rotation[..., :coord_dim, :coord_dim].contiguous(), \
+            translation[..., :coord_dim].contiguous()
+    else:
+        return rotation[..., :coord_dim, :coord_dim], translation[..., :coord_dim]
 
 
 def batch_angle2mat(batch_cos_sin):

@@ -44,7 +44,7 @@ def config_params():
     parser.add_argument('--epoches', type=int, default=400)
     parser.add_argument('--batchsize', type=int, default=1)
     parser.add_argument('--num_workers', type=int, default=0)
-    parser.add_argument('--in_dim', type=int, default=6, choices=[2, 3, 4, 6],
+    parser.add_argument('--in_dim', type=int, default=4, choices=[2, 3, 4, 6],
                         help='2=(x,y) 3=(x,y,z) 4=(x,y,nx,ny) 6=(x,y,z,nx,ny,nz)')
     parser.add_argument('--transform_head', type=int, default=8,
                         help='transform head. for initial-identical-transform-matrix, if negative, random-transform-amtrix')

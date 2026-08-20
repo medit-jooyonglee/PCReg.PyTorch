@@ -25,7 +25,8 @@ from reversereg.preproc import sampler
 from pcregmodel.utils import pc_normalize, random_select_points, shift_point_cloud, \
     jitter_point_cloud, generate_random_rotation_matrix, \
     generate_random_tranlation_vector, generate_random_scale, transform, \
-    inverse_similarity_transform, similarity_transform
+    inverse_similarity_transform, similarity_transform, \
+    project_geometry, project_pose
 
 
 def sampling_points(points, pose):
@@ -411,6 +412,16 @@ class ConvertCoco(object):
                      moving_target_points, R, t, scale]
             target_points, moving_points, moving_target_points, R, t, scale = \
                 [v.astype(np.float32) for v in items]
+                
+            # if self.in_dim in (2, 4):
+            #     # = project_geometry(moving_points, coord_dim=2)
+            #     has_normal = self.in_dim in (4,)
+            #     target_points, moving_points, moving_target_points = [project_geometry(v, coord_dim=2, has_normal=has_normal) \
+            #         for v in [target_points, moving_points, moving_target_points]]
+                
+            #     R, t = project_pose(R, t, coord_dim=2)
+                
+                
             return target_points, moving_points, moving_target_points, R, t, scale
         items = [target_points, moving_points, moving_target_points, R, t]
         target_points, moving_points, moving_target_points, R, t = \

@@ -246,7 +246,9 @@ class IterativeSimilarityBenchmark(nn.Module):
 
 
 if __name__ == '__main__':
-    x, y = torch.randn(4, 3, 5), torch.randn(4, 3, 5)
+    in_dim = 4
+    x, y = torch.randn(4, in_dim, 5), torch.randn(4, in_dim, 5)
     net = IterativeBenchmark(in_dim=3, niters=2, gn=False)
     print(net)
     batch_R, batch_t, transformed_x = net(x, y)
+    print()
