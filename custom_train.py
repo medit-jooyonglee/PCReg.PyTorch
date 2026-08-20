@@ -18,7 +18,7 @@ from trainer import torch_utils, vtk_utils, get_logger
 
 from pcregmodel.data.cococustom import CocoDetection
 
-visualize = True
+visualize = False
 
 def setup_seed(seed):
     torch.backends.cudnn.deterministic = True
@@ -42,8 +42,10 @@ def config_params():
     parser.add_argument('--epoches', type=int, default=400)
     parser.add_argument('--batchsize', type=int, default=1)
     parser.add_argument('--num_workers', type=int, default=0)
-    parser.add_argument('--in_dim', type=int, default=3,
+    parser.add_argument('--in_dim', type=int, default=6,
                         help='3 for (x, y, z) or 6 for (x, y, z, nx, ny, nz)')
+    parser.add_argument('--transform_head', type=int, default=8,
+                        help='transform head. for initial-identical-transform-matrix, if negative, random-transform-amtrix')
     parser.add_argument('--niters', type=int, default=40,
                         help='iteration nums in one model forward')
     parser.add_argument('--registration_mode', default='similarity',
@@ -268,6 +270,7 @@ def main():
         'backbone': backbone,
         'sample_count1': args.sample_count1,
         'sample_count2': args.sample_count2,
+        'transform_head': args.transform_head
     }
     if estimate_scale:
         model_kwargs['max_log_scale'] = args.max_log_scale
