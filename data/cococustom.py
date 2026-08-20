@@ -375,11 +375,15 @@ class ConvertCoco(object):
             # pivot transform
         scale_range = [self.min_scale,
                        self.max_scale] if self.estimate_scale else [1.0, 1.0]
+        roate_range = [0.1045, 0, 0]
+        translate_range = [0.008, 0.008, 0.0]
+        # 0.1045 == approx 6degree 
         afm_mat = image_utils.batch_aug_params(
             {
                 # 10 degree??
-                'rotate': [np.pi/20, 0, 0],
-                'translate': [0.005, 0.005, 0.0],
+                'rotate': roate_range,
+                'translate': translate_range,
+                # 'translate': [0.2, 0.2, 0.0],
                 'scale': scale_range,
             },
             1,
@@ -1015,16 +1019,16 @@ if __name__ == "__main__":
         print(torch_utils.get_shape(item))
 
         tgt, src, moving_target, R, t, scale = item
-
-        vtk_utils.split_show([
-            vtk_utils.tensor_actor(src, normal_size=0.01,
-                                   color=(1, 1, 0), point_size=5),
-            vtk_utils.tensor_actor(
-                moving_target, normal_size=0.01, color=(0, 1, 0), point_size=5),
-        ], [
-            src, moving_target,
-            vtk_utils.point_pair(src, moving_target, color=(1, 0, 0), line_width=2)
-        ])
+        if src.shape[1] >= 6:
+            vtk_utils.split_show([
+                vtk_utils.tensor_actor(src, normal_size=0.01,
+                                    color=(1, 1, 0), point_size=5),
+                vtk_utils.tensor_actor(
+                    moving_target, normal_size=0.01, color=(0, 1, 0), point_size=5),
+            ], [
+                src, moving_target,
+                vtk_utils.point_pair(src, moving_target, color=(1, 0, 0), line_width=2)
+            ])
 
         fit_src = similarity_transform(src, R, t, scale)
         vtk_utils.split_show([

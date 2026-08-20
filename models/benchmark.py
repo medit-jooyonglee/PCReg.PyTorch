@@ -16,7 +16,8 @@ except ImportError:
 from .pointnet2 import PointNet2Encoder
 from .dgcnn import DGCNNEncoder
 
-
+from trainer import torch_utils
+from scipy.spatial.transform import Rotation
 class PointNet(nn.Module):
     def __init__(self, in_dim, gn, mlps=[64, 64, 64, 128, 1024]):
         super(PointNet, self).__init__()

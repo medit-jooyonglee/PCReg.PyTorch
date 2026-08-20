@@ -1,4 +1,5 @@
 import argparse
+import glob
 import json
 import platform
 import numpy as np
@@ -19,7 +20,7 @@ from trainer import torch_utils, vtk_utils, get_logger, time_strftime
 
 from pcregmodel.data.cococustom import CocoDetection
 
-visualize = False
+visualize = True
 
 def setup_seed(seed):
     torch.backends.cudnn.deterministic = True
@@ -47,12 +48,12 @@ def config_params():
                         help='3 for (x, y, z) or 6 for (x, y, z, nx, ny, nz)')
     parser.add_argument('--transform_head', type=int, default=8,
                         help='transform head. for initial-identical-transform-matrix, if negative, random-transform-amtrix')
-    parser.add_argument('--niters', type=int, default=40,
+    parser.add_argument('--niters', type=int, default=2,
                         help='iteration nums in one model forward')
     parser.add_argument('--registration_mode', default='similarity',
                         choices=['rigid', 'similarity'])
     parser.add_argument('--backbone', default='pointnet',
-                        choices=['pointnet', 'pointnet2'])
+                        choices=['pointnet', 'pointnet2', 'dgcnn'])
     parser.add_argument('--min_scale', type=float, default=0.9)
     parser.add_argument('--max_scale', type=float, default=1.1)
     parser.add_argument('--max_log_scale', type=float, default=0.35)
@@ -73,6 +74,10 @@ def config_params():
                         help='the path to save training logs and checkpoints')
     parser.add_argument('--saved_frequency', type=int, default=10,
                         help='the frequency to save the logs and checkpoints')
+    
+    parser.add_argument('--load_args', type=str, 
+                        default='',
+                        help='loading from i/o args')
     args = parser.parse_args()
     return args
 
@@ -123,6 +128,7 @@ def forward_registration(model, batch, loss_fn, normal_loss_fn=None):
         
         vtk_utils.change_actor_color(pp_actor, colors)
         vtk_utils.split_show([
+            vtk_utils.get_axes(0.3),
             # ss, 
             vtk_utils.create_points_actor(rr, invert=False, point_size=3, color=(0, 1, 0)), 
             vtk_utils.create_points_actor(ss, invert=False, point_size=3, color=(1, 1, 0)), 
@@ -233,11 +239,28 @@ def save_args(args, saved_path):
     with open(args_json_path, 'w') as f:
         json.dump(args_dict, f, indent=4)
         
+
+def load_args(args_json_path):
+    # args_json_path = os.path.join(saved_path, 'args.json')
+    if not os.path.exists(args_json_path):
+        raise FileNotFoundError(f"args.json not found in {args_json_path}")
+    with open(args_json_path, 'r') as f:
+        args_dict = json.load(f)
+    return argparse.Namespace(**args_dict)
+        
         
 def main():
     args = config_params()
+    
     logger = get_logger()
     print(args)
+    
+    if args.load_args:
+        loaded_args = load_args(args.load_args)
+        args.__dict__.update(vars(loaded_args))  # Update the current args with the loaded args
+        # Update the current args with the loaded args
+        # for key, value in vars(loaded_args).items():
+            # setattr(args, key, value)
 
     setup_seed(args.seed)
     if not os.path.exists(args.saved_path):
@@ -302,19 +325,27 @@ def main():
                                                      last_epoch=-1)
 
     writer = SummaryWriter(summary_path)
-    
-    if args.resume and os.path.exists(args.resume):
-        resume = args.resume
-        # from trainer import utils as trainer_utils
-        state_dict = torch.load(resume, map_location='cpu')
-        try:
-            res = model.load_state_dict(state_dict, strict=False)
-            print(f'loading complete: {resume} / {res}')
-        except RuntimeError as e:
-            logger.error('----------------------------------------------------------------')
-            logger.error(f'Error loading state_dict from {resume}: {e}')
-            logger.error('----------------------------------------------------------------')
-            # print('Attempting to load with strict=False...')
+    found_checkpoint = glob.glob(checkpoints_path + '/*.pth')
+    if args.resume and os.path.exists(args.resume) or len(found_checkpoint) > 0:
+        # first loading... 
+        check_points = [
+            path for path in [*found_checkpoint, args.resume] if os.path.exists(path)
+        ]
+        # found args
+        
+        # resume = args.resume
+        for file in check_points:
+            # from trainer import utils as trainer_utils
+            state_dict = torch.load(file, map_location='cpu')
+            try:
+                res = model.load_state_dict(state_dict, strict=False)
+                print(f'loading complete: {file} / {res}')
+                break
+            except RuntimeError as e:
+                logger.error('----------------------------------------------------------------')
+                logger.error(f'Error loading state_dict from {file}: {e}')
+                logger.error('----------------------------------------------------------------')
+                # print('Attempting to load with strict=False...')
             # res = model.load_state_dict(state_dict, strict=False)
             # print(f'loading complete: {resume} / {res}')
         # print(res)
