@@ -14,7 +14,7 @@ from tqdm import tqdm
 from data import CustomData
 from models import IterativeBenchmark, IterativeSimilarityBenchmark
 from metrics import compute_metrics, summary_metrics, print_train_info
-from utils import time_calc
+from utils import time_calc, geometry_layout, project_geometry, project_pose
 from trainer import torch_utils, vtk_utils, get_logger, time_strftime
 # from pc
 
@@ -44,8 +44,8 @@ def config_params():
     parser.add_argument('--epoches', type=int, default=400)
     parser.add_argument('--batchsize', type=int, default=1)
     parser.add_argument('--num_workers', type=int, default=0)
-    parser.add_argument('--in_dim', type=int, default=6,
-                        help='3 for (x, y, z) or 6 for (x, y, z, nx, ny, nz)')
+    parser.add_argument('--in_dim', type=int, default=6, choices=[2, 3, 4, 6],
+                        help='2=(x,y) 3=(x,y,z) 4=(x,y,nx,ny) 6=(x,y,z,nx,ny,nz)')
     parser.add_argument('--transform_head', type=int, default=8,
                         help='transform head. for initial-identical-transform-matrix, if negative, random-transform-amtrix')
     parser.add_argument('--niters', type=int, default=2,
@@ -85,27 +85,33 @@ def config_params():
 normal_loss_weight = 1.0
 
 
-def compute_loss(moving_target, pred_ref_clouds, loss_fn, normal_loss_fn=None):
+def compute_loss(moving_target, pred_ref_clouds, loss_fn, coord_dim,
+                 has_normal, normal_loss_fn=None):
     losses = []
     discount_factor = 0.5
     prediction_count = len(pred_ref_clouds)
-    has_normals = normal_loss_fn is not None and moving_target.shape[-1] >= 6
+    use_normal_loss = has_normal and normal_loss_fn is not None
     for i in range(prediction_count):
-        loss = loss_fn(moving_target[..., :3].contiguous(),
-                       pred_ref_clouds[i][..., :3].contiguous())
-        if has_normals:
+        loss = loss_fn(moving_target[..., :coord_dim].contiguous(),
+                       pred_ref_clouds[i][..., :coord_dim].contiguous())
+        if use_normal_loss:
             loss = loss + normal_loss_weight * normal_loss_fn(
-                pred_ref_clouds[i][..., 3:6].contiguous(),
-                moving_target[..., 3:6].contiguous(),
+                pred_ref_clouds[i][..., coord_dim:2 * coord_dim].contiguous(),
+                moving_target[..., coord_dim:2 * coord_dim].contiguous(),
             )
         losses.append(discount_factor**(prediction_count - i)*loss)
     return torch.sum(torch.stack(losses))
 
 
 
-def forward_registration(model, batch, loss_fn, normal_loss_fn=None):
+def forward_registration(model, batch, loss_fn, coord_dim, has_normal,
+                         normal_loss_fn=None):
     ref_cloud, src_cloud, moving_target, gtR, gtt = \
         [value.cuda() for value in batch[:5]]
+    ref_cloud, src_cloud, moving_target = [
+        project_geometry(v, coord_dim, has_normal)
+        for v in (ref_cloud, src_cloud, moving_target)
+    ]
     output = model(src_cloud.permute(0, 2, 1).contiguous(),
                    ref_cloud.permute(0, 2, 1).contiguous())
     if len(output) == 3:
@@ -142,12 +148,14 @@ def forward_registration(model, batch, loss_fn, normal_loss_fn=None):
             # rr
             ])
     dist_loss_weight = 10
-    loss = compute_loss(moving_target, predictions, loss_fn, normal_loss_fn) * dist_loss_weight + scale_loss
+    loss = compute_loss(moving_target, predictions, loss_fn, coord_dim,
+                        has_normal, normal_loss_fn) * dist_loss_weight + scale_loss
     return loss, rotation, translation, scale_mae
 
 
 @time_calc
-def train_one_epoch(train_loader, model, loss_fn, optimizer, normal_loss_fn=None):
+def train_one_epoch(train_loader, model, loss_fn, optimizer, coord_dim,
+                    has_normal, normal_loss_fn=None):
     losses = []
     r_mse, r_mae, t_mse, t_mae, r_isotropic, t_isotropic = [], [], [], [], [], []
     scale_maes = []
@@ -158,10 +166,11 @@ def train_one_epoch(train_loader, model, loss_fn, optimizer, normal_loss_fn=None
         # except Exception as e:
         #     print(f"Error occurred while fetching batch {i}: {e}")
         #     continue
-            
-        gtR, gtt = batch[3].cuda(), batch[4].cuda()
+
+        gtR, gtt = project_pose(batch[3].cuda(), batch[4].cuda(), coord_dim)
         optimizer.zero_grad()
-        loss, R, t, scale_mae = forward_registration(model, batch, loss_fn, normal_loss_fn)
+        loss, R, t, scale_mae = forward_registration(
+            model, batch, loss_fn, coord_dim, has_normal, normal_loss_fn)
         loss.backward()
         optimizer.step()
 
@@ -193,7 +202,8 @@ def train_one_epoch(train_loader, model, loss_fn, optimizer, normal_loss_fn=None
 
 
 @time_calc
-def test_one_epoch(test_loader, model, loss_fn, normal_loss_fn=None):
+def test_one_epoch(test_loader, model, loss_fn, coord_dim, has_normal,
+                   normal_loss_fn=None):
     model.eval()
     losses = []
     r_mse, r_mae, t_mse, t_mae, r_isotropic, t_isotropic = [], [], [], [], [], []
@@ -202,8 +212,9 @@ def test_one_epoch(test_loader, model, loss_fn, normal_loss_fn=None):
         scale_maes = []
         for batch in tqdm(test_loader):
 
-            gtR, gtt = batch[3].cuda(), batch[4].cuda()
-            loss, R, t, scale_mae = forward_registration(model, batch, loss_fn, normal_loss_fn)
+            gtR, gtt = project_pose(batch[3].cuda(), batch[4].cuda(), coord_dim)
+            loss, R, t, scale_mae = forward_registration(
+                model, batch, loss_fn, coord_dim, has_normal, normal_loss_fn)
             cur_r_mse, cur_r_mae, cur_t_mse, cur_t_mae, cur_r_isotropic, \
             cur_t_isotropic = compute_metrics(R, t, gtR, gtt)
 
@@ -315,9 +326,10 @@ def main():
     # moving_points is generated by transforming a copy of target_points, so
     # src/ref points share the same order and count: point-wise MSE is exact
     # here, unlike EMD/Chamfer which solve the harder unordered-set case.
+    coord_dim, has_normal = geometry_layout(args.in_dim)
     loss_fn = nn.MSELoss()
     loss_fn = loss_fn.cuda()
-    normal_loss_fn = PairwiseSmoothL1Loss(dim=3).cuda() if args.in_dim >= 6 else None
+    normal_loss_fn = PairwiseSmoothL1Loss(dim=coord_dim).cuda() if has_normal else None
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
                                                      milestones=args.milestones,
@@ -355,9 +367,11 @@ def main():
         float('inf'), float('inf'), float('inf')
     for epoch in range(args.epoches):
         print('=' * 20, epoch + 1, '=' * 20)
-        train_results = train_one_epoch(train_loader, model, loss_fn, optimizer, normal_loss_fn)
+        train_results = train_one_epoch(train_loader, model, loss_fn, optimizer,
+                                        coord_dim, has_normal, normal_loss_fn)
         print_train_info(train_results)
-        test_results = test_one_epoch(test_loader, model, loss_fn, normal_loss_fn)
+        test_results = test_one_epoch(test_loader, model, loss_fn, coord_dim,
+                                      has_normal, normal_loss_fn)
         print_train_info(test_results)
 
         if epoch % args.saved_frequency == 0:

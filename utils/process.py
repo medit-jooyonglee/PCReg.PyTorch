@@ -126,6 +126,62 @@ def batch_similarity_transform(batch_pc, batch_R, batch_t=None,
     return transformed
 
 
+def geometry_layout(in_dim):
+    """Map a channel count to (coord_dim, has_normal).
+
+    in_dim=2 -> (x, y); 3 -> (x, y, z); 4 -> xy + normal xy;
+    6 -> xyz + normal xyz.
+    """
+    if in_dim not in (2, 3, 4, 6):
+        raise ValueError('in_dim must be one of 2, 3, 4, 6')
+    return (2 if in_dim in (2, 4) else 3), in_dim in (4, 6)
+
+
+def project_geometry(pc, coord_dim, has_normal, source_dim=3):
+    """Reduce a tensor laid out as coords(source_dim)/normals(source_dim)/others
+    down to coord_dim (+coord_dim normals), dropping the trailing axes
+    (e.g. z) -- the same coords/normals/others split as similarity_transform,
+    just parameterized by the target coordinate dimensionality.
+    """
+    coords = pc[..., :source_dim]
+    normals = pc[..., source_dim:2 * source_dim]
+    others = pc[..., 2 * source_dim:]
+    if has_normal and normals.shape[-1] < coord_dim:
+        raise ValueError('has_normal requested but pc has no normal channels')
+    parts = [coords[..., :coord_dim]]
+    if has_normal:
+        parts.append(normals[..., :coord_dim])
+    if others.shape[-1]:
+        parts.append(others)
+    return torch.cat(parts, dim=-1)
+
+
+def project_pose(rotation, translation, coord_dim):
+    """Reduce a 3D similarity pose to its leading coord_dim block; exact
+    when the transform only acts within the first coord_dim axes (e.g. a
+    z=0 planar point cloud rotated only about z).
+    """
+    if rotation.shape[-1] == coord_dim:
+        return rotation, translation
+    return rotation[..., :coord_dim, :coord_dim].contiguous(), \
+        translation[..., :coord_dim].contiguous()
+
+
+def batch_angle2mat(batch_cos_sin):
+    '''
+
+    :param batch_cos_sin: shape=(B, 2), unnormalized (cos, sin)
+    :return: shape=(B, 2, 2)
+    '''
+    norm = batch_cos_sin.norm(dim=1, keepdim=True).clamp_min(1e-8)
+    cos, sin = (batch_cos_sin / norm).unbind(dim=1)
+    R = torch.zeros(cos.shape[0], 2, 2, dtype=batch_cos_sin.dtype,
+                    device=batch_cos_sin.device)
+    R[:, 0, 0], R[:, 0, 1] = cos, -sin
+    R[:, 1, 0], R[:, 1, 1] = sin, cos
+    return R
+
+
 def compose_similarity(rotation1, translation1, scale1,
                        rotation2, translation2, scale2):
     """Compose T2(T1(p)) for batched similarity transforms."""

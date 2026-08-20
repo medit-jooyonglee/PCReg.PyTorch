@@ -7,9 +7,10 @@ from utils import inv_R_t
 
 def anisotropic_R_error(r1, r2, seq='xyz', degrees=True):
     '''
-    Calculate mse, mae euler agnle error.
-    :param r1: shape=(B, 3, 3), pred
-    :param r2: shape=(B, 3, 3), gt
+    Calculate mse, mae angle error, per-axis for 3x3 (euler xyz) or the
+    single in-plane angle for 2x2 rotations.
+    :param r1: shape=(B, 3, 3) or (B, 2, 2), pred
+    :param r2: shape=(B, 3, 3) or (B, 2, 2), gt
     :return:
     '''
     if isinstance(r1, torch.Tensor):
@@ -17,6 +18,13 @@ def anisotropic_R_error(r1, r2, seq='xyz', degrees=True):
     if isinstance(r2, torch.Tensor):
         r2 = r2.cpu().detach().numpy()
     assert r1.shape == r2.shape
+    if r1.shape[-1] == 2:
+        angle1 = np.arctan2(r1[:, 1, 0], r1[:, 0, 0])
+        angle2 = np.arctan2(r2[:, 1, 0], r2[:, 0, 0])
+        diff = np.arctan2(np.sin(angle1 - angle2), np.cos(angle1 - angle2))
+        if degrees:
+            diff = np.degrees(diff)
+        return diff ** 2, np.abs(diff)
     eulers1, eulers2 = [], []
     for i in range(r1.shape[0]):
         euler1 = Rotation.from_matrix(r1[i]).as_euler(seq=seq, degrees=degrees)
@@ -50,18 +58,17 @@ def anisotropic_t_error(t1, t2):
 def isotropic_R_error(r1, r2):
     '''
     Calculate isotropic rotation degree error between r1 and r2.
-    :param r1: shape=(B, 3, 3), pred
-    :param r2: shape=(B, 3, 3), gt
+    :param r1: shape=(B, D, D), pred, D in {2, 3}
+    :param r2: shape=(B, D, D), gt
     :return:
     '''
+    dim = r1.shape[-1]
     r2_inv = r2.permute(0, 2, 1).contiguous()
     r1r2 = torch.matmul(r2_inv, r1)
-    # device = r1.device
-    # B = r1.shape[0]
-    # mask = torch.unsqueeze(torch.eye(3).to(device), dim=0).repeat(B, 1, 1)
-    # tr = torch.sum(torch.reshape(mask * r1r2, (B, 9)), dim=-1)
-    tr = r1r2[:, 0, 0] + r1r2[:, 1, 1] + r1r2[:, 2, 2]
-    rads = torch.acos(torch.clamp((tr - 1) / 2, -1, 1))
+    trace = torch.diagonal(r1r2, dim1=-2, dim2=-1).sum(-1)
+    # SO(3): trace = 1 + 2cos(theta); SO(2): trace = 2cos(theta)
+    cos_theta = (trace - (dim - 2)) / 2
+    rads = torch.acos(torch.clamp(cos_theta, -1, 1))
     degrees = rads / math.pi * 180
     return degrees
 

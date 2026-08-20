@@ -63,12 +63,13 @@ def query_knn(neighbor_count, points, centers):
 
 
 class SetAbstraction(nn.Module):
-    def __init__(self, sample_count, neighbor_count, in_channels, mlp_channels):
+    def __init__(self, sample_count, neighbor_count, in_channels, mlp_channels,
+                 coord_dim=3):
         super(SetAbstraction, self).__init__()
         self.sample_count = sample_count
         self.neighbor_count = neighbor_count
         layers = []
-        current = in_channels + 3
+        current = in_channels + coord_dim
         for output in mlp_channels:
             layers.extend((nn.Conv2d(current, output, 1), nn.ReLU(inplace=True)))
             current = output
@@ -93,15 +94,17 @@ class PointNet2Encoder(nn.Module):
     """PointNet++ encoder returning global and optional input-point features."""
 
     def __init__(self, in_dim, sample_count1=256, sample_count2=64,
-                 feature_dim=256, global_dim=1024):
+                 feature_dim=256, global_dim=1024, coord_dim=3):
         super(PointNet2Encoder, self).__init__()
+        self.coord_dim = coord_dim
         self.input_mlp = nn.Sequential(
             nn.Conv1d(in_dim, 64, 1), nn.ReLU(inplace=True),
             nn.Conv1d(64, 64, 1), nn.ReLU(inplace=True),
         )
-        self.sa1 = SetAbstraction(sample_count1, 32, 64, (64, 128, 128))
+        self.sa1 = SetAbstraction(sample_count1, 32, 64, (64, 128, 128),
+                                  coord_dim=coord_dim)
         self.sa2 = SetAbstraction(sample_count2, 32, 128,
-                                  (128, 256, feature_dim))
+                                  (128, 256, feature_dim), coord_dim=coord_dim)
         self.global_mlp = nn.Sequential(
             nn.Conv1d(feature_dim, 512, 1), nn.ReLU(inplace=True),
             nn.Conv1d(512, global_dim, 1), nn.ReLU(inplace=True),
@@ -110,9 +113,10 @@ class PointNet2Encoder(nn.Module):
         self.point_dim = 64
 
     def forward(self, inputs, return_point_features=False):
-        if inputs.dim() != 3 or inputs.shape[1] < 3:
-            raise ValueError('PointNet2Encoder expects (B,C,N), C >= 3')
-        points = inputs[:, :3].transpose(1, 2).contiguous()
+        if inputs.dim() != 3 or inputs.shape[1] < self.coord_dim:
+            raise ValueError(
+                f'PointNet2Encoder expects (B,C,N), C >= {self.coord_dim}')
+        points = inputs[:, :self.coord_dim].transpose(1, 2).contiguous()
         point_features = self.input_mlp(inputs).transpose(1, 2).contiguous()
         points1, features1 = self.sa1(points, point_features)
         _, features2 = self.sa2(points1, features1)

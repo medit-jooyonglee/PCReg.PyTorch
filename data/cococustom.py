@@ -268,7 +268,7 @@ class ConvertCoco(object):
 
         pose_inds = upper_inds if pose == 'upper' else lower_inds
         this_polys, this_archs, this_polys_normals = sampling_points_and_polygons(uniform_polygons, pose_inds, pose,
-                                                                                  with_uniform_normals=self.in_dim >= 6)
+                                                                                  with_uniform_normals=self.in_dim in (4, 6))
         # upper_arch = [np.mean(uniform_polygons[v], axis=0) for v in upper_inds]
         # assert len(this_polys)  > 0, f"No polygons found for pose '{pose}' with indices {pose_inds}."
         # source - points
@@ -320,7 +320,7 @@ class ConvertCoco(object):
             [target_points, np.zeros_like(target_points[:, :1])], axis=-1)
         deform_moving_points = np.concatenate(
             [deform_moving_points, np.zeros_like(deform_moving_points[:, :1])], axis=-1)
-        if self.in_dim >= 6:
+        if self.in_dim in (4, 6):
             moving_normals_concat = np.concatenate(this_polys_normals, axis=0)
             moving_normals_concat = np.concatenate(
                 [moving_normals_concat, np.zeros_like(moving_normals_concat[:, :1])], axis=-1)
