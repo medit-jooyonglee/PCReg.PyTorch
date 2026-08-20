@@ -14,6 +14,7 @@ except ImportError:
     from utils import (batch_quat2mat, batch_transform,
                        batch_similarity_transform, compose_similarity)
 from .pointnet2 import PointNet2Encoder
+from .dgcnn import DGCNNEncoder
 
 
 class PointNet(nn.Module):
@@ -47,7 +48,16 @@ def _make_encoder(backbone, in_dim, gn=False, **kwargs):
             global_dim=kwargs.get('global_dim', 1024),
         )
         return encoder, encoder.global_dim
-    raise ValueError("backbone must be 'pointnet' or 'pointnet2'")
+    if backbone == 'dgcnn':
+        encoder = DGCNNEncoder(
+            in_dim=in_dim,
+            k=kwargs.get('k', 20),
+            mlps=kwargs.get('dgcnn_mlps', (64, 64, 128, 256)),
+            global_dim=kwargs.get('global_dim', 1024),
+            gn=gn,
+        )
+        return encoder, encoder.global_dim
+    raise ValueError("backbone must be 'pointnet', 'pointnet2' or 'dgcnn'")
 
 
 class Benchmark(nn.Module):

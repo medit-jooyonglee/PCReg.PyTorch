@@ -21,7 +21,8 @@ from pcregmodel.models import benchmark
 
 @pytest.mark.parametrize("in_dim", [3, 6, 9])
 @pytest.mark.parametrize("transform_head", [-1, 0, 8])
-def test_similarity_benchmark_forward(in_dim, transform_head):
+@pytest.mark.parametrize("backbone", ['pointnet', 'dgcnn'])
+def test_similarity_benchmark_forward(in_dim, transform_head, backbone):
     
     print('parameters:', in_dim, transform_head)
     xs  = torch.rand(2, in_dim, 10)  # Batch of 2 samples, each with 10 points
@@ -44,7 +45,8 @@ def test_similarity_benchmark_forward(in_dim, transform_head):
     
     model = benchmark.SimilarityBenchmark(
         in_dim=in_dim,
-        transform_head=transform_head)
+        transform_head=transform_head,
+        backbone=backbone)
     # res = 
     
     b_r, b_t, b_s, b_x = model(xs, ys)

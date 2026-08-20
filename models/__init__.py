@@ -1,6 +1,7 @@
 from .benchmark import (Benchmark, IterativeBenchmark, SimilarityBenchmark,
                         IterativeSimilarityBenchmark)
 from .pointnet2 import PointNet2Encoder
+from .dgcnn import DGCNNEncoder
 from .deformation import (CoarseDeformationNet,
                           SimilarityDeformationRegistration)
 
