@@ -13,12 +13,12 @@ from data import CustomData
 from models import IterativeBenchmark, IterativeSimilarityBenchmark
 from metrics import compute_metrics, summary_metrics, print_train_info
 from utils import time_calc
-from trainer import torch_utils, vtk_utils
+from trainer import torch_utils, vtk_utils, get_logger
 # from pc
 
 from pcregmodel.data.cococustom import CocoDetection
 
-visualize = False
+visualize = True
 
 def setup_seed(seed):
     torch.backends.cudnn.deterministic = True
@@ -119,7 +119,12 @@ def forward_registration(model, batch, loss_fn, normal_loss_fn=None):
         pp_actor = [vtk_utils.create_points_actor(p0, invert=False ) for p0 in pp]
         
         vtk_utils.change_actor_color(pp_actor, colors)
-        vtk_utils.split_show([rr, ss, pp_actor[-1]], [
+        vtk_utils.split_show([
+            # ss, 
+            vtk_utils.create_points_actor(rr, invert=False, point_size=3, color=(0, 1, 0)), 
+            vtk_utils.create_points_actor(ss, invert=False, point_size=3, color=(1, 1, 0)), 
+            ], 
+                             [
             vtk_utils.create_points_actor(rr, invert=False, point_size=3, color=(0, 1, 0)), 
             pp_actor],
             [
@@ -221,6 +226,7 @@ def test_one_epoch(test_loader, model, loss_fn, normal_loss_fn=None):
 
 def main():
     args = config_params()
+    logger = get_logger()
     print(args)
 
     setup_seed(args.seed)
@@ -287,8 +293,16 @@ def main():
         resume = args.resume
         # from trainer import utils as trainer_utils
         state_dict = torch.load(resume, map_location='cpu')
-        res = model.load_state_dict(state_dict, strict=False)
-        print(f'loading complete: {resume} / {res}')
+        try:
+            res = model.load_state_dict(state_dict, strict=False)
+            print(f'loading complete: {resume} / {res}')
+        except RuntimeError as e:
+            logger.error('----------------------------------------------------------------')
+            logger.error(f'Error loading state_dict from {resume}: {e}')
+            logger.error('----------------------------------------------------------------')
+            # print('Attempting to load with strict=False...')
+            # res = model.load_state_dict(state_dict, strict=False)
+            # print(f'loading complete: {resume} / {res}')
         # print(res)
     
     

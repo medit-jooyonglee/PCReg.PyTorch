@@ -2,6 +2,8 @@ import os
 import torch
 import torch.nn as nn
 import sys
+
+from typing import Literal
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOR_DIR = os.path.dirname(BASE_DIR)
 sys.path.append(ROOR_DIR)
@@ -115,9 +117,14 @@ class IterativeBenchmark(nn.Module):
 class SimilarityBenchmark(nn.Module):
     """Predict source-to-target rotation, translation and isotropic scale."""
 
-    def __init__(self, in_dim, gn=False, backbone='pointnet2',
-                 fcs=(1024, 512, 256, 8), max_log_scale=0.35, **kwargs):
+    def __init__(self, in_dim=3, gn=False, backbone='pointnet2',
+                 fcs=[1024, 512, 256], transform_head:int=-1, max_log_scale=0.35, **kwargs):
         super(SimilarityBenchmark, self).__init__()
+        # optional
+        if isinstance(fcs, tuple):
+            fcs = list(fcs)
+        if transform_head <= 0:
+            fcs.append(8)
         self.in_dim = in_dim
         self.geometry_dim = 6 if in_dim >= 6 else 3
         self.max_log_scale = float(max_log_scale)
@@ -135,12 +142,25 @@ class SimilarityBenchmark(nn.Module):
                     self.decoder.add_module(f'gn_{i}', nn.GroupNorm(groups, output))
                 self.decoder.add_module(f'relu_{i}', nn.ReLU(inplace=True))
             current = output
+        
+        self.transform_head = None
+        if transform_head > 0:        
+            self.transform_head = nn.Linear(current, transform_head)
+            nn.init.zeros_(self.transform_head.weight)
+            nn.init.zeros_(self.transform_head.bias)
+            with torch.no_grad():
+                self.transform_head.bias[3] = 1.0
 
     def forward(self, source, target):
         source_features = self.encoder(source)
         target_features = self.encoder(target)
-        output = self.decoder(torch.cat((source_features,
+        decoded = self.decoder(torch.cat((source_features,
                                          target_features), dim=1))
+        
+        if self.transform_head is None:
+            output = decoded
+        else:
+            output = self.transform_head(decoded)
         translation = output[:, :3]
         quaternion = output[:, 3:7]
         quaternion = quaternion / quaternion.norm(

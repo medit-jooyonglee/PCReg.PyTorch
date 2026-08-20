@@ -79,16 +79,26 @@ def transform(pc, R, t=None):
 
 def similarity_transform(pc, R, t=None, scale=1.0):
     """Apply isotropic scale, rotation and translation to numpy points."""
-    result = scale * np.dot(pc, R.T)
+    coords, normals, others = pc[:, :3], pc[:, 3:6], pc[:, 6:]
+    t_coords = scale * np.dot(coords, R.T)
+
+    t_normals = np.dot(normals, R.T) if normals.size > 0 else normals
     if t is not None:
-        result = result + t
+        t_coords = t_coords + t
+    result = np.concatenate([t_coords, t_normals, others], axis=-1)
     return result
 
 
 def inverse_similarity_transform(pc, R, t, scale):
     if scale <= 0:
         raise ValueError('scale must be positive')
-    return np.dot(pc - t, R) / scale
+    coords, normals, others = pc[:, :3], pc[:, 3:6], pc[:, 6:]
+
+    t_coords = np.dot(coords - t, R) / scale
+    t_normals = np.dot(normals, R) if normals.size > 0 else normals
+    t_res = np.concatenate([t_coords, t_normals, others], axis=-1)
+    return t_res
+
 
 
 def batch_transform(batch_pc, batch_R, batch_t=None):
@@ -283,3 +293,4 @@ def random_crop(pc, p_keep):
     dist_from_plane = np.dot(pc_centered, rand_xyz)
     mask = dist_from_plane > np.percentile(dist_from_plane, (1.0 - p_keep) * 100)
     return pc[mask, :]
+
