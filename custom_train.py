@@ -78,6 +78,10 @@ def config_params():
     parser.add_argument('--load_args', type=str, 
                         default='',
                         help='loading from i/o args')
+    parser.add_argument('--visualize', 
+                        # default=False,
+                        action='store_true',
+                        help='for visualize inference results')
     args = parser.parse_args()
     return args
 
@@ -128,7 +132,7 @@ def forward_registration(model, batch, loss_fn, coord_dim, has_normal,
         scale_mae = torch.abs(scale - gt_scale).mean().item()
         
     if visualize:
-        rr, ss, pp = torch_utils.to_numpy([ref_cloud, src_cloud, predictions], squeeze=True)
+        rr, ss, mm, pp = torch_utils.to_numpy([ref_cloud, src_cloud, moving_target, predictions], squeeze=True)
         colors = vtk_utils.get_rainbow_color_table(len(pp))
         pp_actor = [vtk_utils.create_points_actor(p0, invert=False ) for p0 in pp]
         
@@ -138,6 +142,7 @@ def forward_registration(model, batch, loss_fn, coord_dim, has_normal,
             # ss, 
             vtk_utils.create_points_actor(rr, invert=False, point_size=3, color=(0, 1, 0)), 
             vtk_utils.create_points_actor(ss, invert=False, point_size=3, color=(1, 1, 0)), 
+            vtk_utils.create_points_actor(mm, invert=False, point_size=3, color=(0, 1, 1)), 
             ], 
                              [
             vtk_utils.create_points_actor(rr, invert=False, point_size=3, color=(0, 1, 0)), 
@@ -264,6 +269,8 @@ def main():
     args = config_params()
     
     logger = get_logger()
+    global visualize
+    visualize = args.visualize
     print(args)
     
     if args.load_args:
@@ -351,7 +358,7 @@ def main():
             state_dict = torch.load(file, map_location='cpu')
             try:
                 res = model.load_state_dict(state_dict, strict=False)
-                print(f'loading complete: {file} / {res}')
+                logger.info(f'loading complete: {file} / {res}')
                 break
             except RuntimeError as e:
                 logger.error('----------------------------------------------------------------')

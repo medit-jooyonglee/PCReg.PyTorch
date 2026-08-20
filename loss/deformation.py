@@ -1,7 +1,7 @@
 """Robust losses for sparse-control point-cloud deformation."""
 
 import torch
-
+from trainer import torch_utils
 
 def _trimmed_mean(values, trim_ratio):
     if not 0.0 < trim_ratio <= 1.0:
@@ -58,3 +58,25 @@ def coarse_deformation_loss(prediction, target_points, trim_ratio=0.9,
         'magnitude_loss': magnitude,
         'confidence_loss': confidence,
     }
+    
+class CoarseDeformationLoss:
+    def __init__(self, trim_ratio=0.9, data_weight=1.0, smoothness_weight=0.1,
+                 magnitude_weight=0.01, confidence_weight=0.001, **kwargs):
+        self.trim_ratio = trim_ratio
+        self.data_weight = data_weight
+        self.smoothness_weight = smoothness_weight
+        self.magnitude_weight = magnitude_weight
+        self.confidence_weight = confidence_weight
+
+    def __call__(self, inputs, prediction, targets):
+        assert isinstance(inputs, (list, tuple)) and len(inputs) >= 2
+        target_points = inputs[0]
+        target_points = target_points.transpose(1, 2).contiguous()
+        # target_points, moving_points, moving_target_points, R, t
+        return coarse_deformation_loss(
+            prediction, target_points, trim_ratio=self.trim_ratio,
+            data_weight=self.data_weight,
+            smoothness_weight=self.smoothness_weight,
+            magnitude_weight=self.magnitude_weight,
+            confidence_weight=self.confidence_weight,
+        )

@@ -132,12 +132,17 @@ class CocoDetection(torchvision.datasets.CocoDetection):
                  max_scale=1.1,
                  deform_mode=False,
                  in_dim=3,
+                 # phase train / valid 
+                 name:str='',
                  **kwargs):
         super(CocoDetection, self).__init__(img_folder, ann_file)
         # internal-splits
         coco_directory_structure_check(self)
         # self.deform_mode = deform_mode
+        if name:
+            self.train = train = name == 'train'
         self.train = train
+        
         self.split = 0.8 if train else 0.2
         # self._transforms = transforms
         self.include_masks = include_masks
@@ -1002,6 +1007,34 @@ def convert_coco_poly_to_mask(segmentations, height, width):
         return torch.zeros((0, height, width), dtype=torch.uint8)
     return torch.stack(masks, dim=0)
 
+
+class CocoDetectionWrapper(CocoDetection):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+    
+    
+    def __getitem__(self, idx):
+        item = super().__getitem__(idx)
+        assert len(item) == 6, f"Expected 6 items, got {len(item)}"
+        # transpost
+        tgt, src, moving_target, R, t, scale = item
+        tgt = tgt.T.copy()
+        src = src.T.copy()
+        inputs = (
+                tgt, src, R, t, scale
+        )
+        targets = ()
+        return inputs, targets
+        # return tgt, src, moving_target, R, t, scale
+        
+    # def __getitem__(self, idx):
+    #     while True:
+    #         try:
+    #             res = self.item(idx)
+    #             return res
+    #         except Exception as e:
+    #             print(f"Error processing index {idx}: {e}")
+    #             idx = (idx + 1) % len(self.ids)  # Move to the next index
 
 if __name__ == "__main__":
     dataset = CocoDetection(

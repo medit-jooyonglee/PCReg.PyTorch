@@ -108,7 +108,10 @@ class CoarseDeformationNet(nn.Module):
         radius = radius.expand(-1, center_count, -1).reshape(batch_size, -1)
         return controls[:, :self.num_controls], radius[:, :self.num_controls]
 
-    def forward(self, source, target):
+    def forward(self, *inputs):
+        if len(inputs) > 2:
+            target, source = inputs[:2]
+        
         if source.shape[1] != self.in_dim or target.shape[1] != self.in_dim:
             raise ValueError('source and target channels must equal in_dim')
         source_global, source_local = self.encoder(
