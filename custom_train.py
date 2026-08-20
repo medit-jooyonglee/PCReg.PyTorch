@@ -20,7 +20,7 @@ from trainer import torch_utils, vtk_utils, get_logger, time_strftime
 
 from pcregmodel.data.cococustom import CocoDetection
 
-visualize = True
+visualize = False
 
 def setup_seed(seed):
     torch.backends.cudnn.deterministic = True

@@ -157,8 +157,8 @@ class SimilarityBenchmark(nn.Module):
         self.transform_head = None
         if transform_head > 0:        
             self.transform_head = nn.Linear(current, transform_head)
-            nn.init.zeros_(self.transform_head.weight)
-            nn.init.zeros_(self.transform_head.bias)
+            nn.init.normal_(self.transform_head.weight, std=0.001)
+            nn.init.normal_(self.transform_head.bias, std=0.001)
             with torch.no_grad():
                 self.transform_head.bias[3] = 1.0
 
