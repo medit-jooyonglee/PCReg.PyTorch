@@ -190,7 +190,7 @@ class ConvertCoco(object):
                  min_scale=0.9, max_scale=1.1, deform_mode=False,
                  in_dim=3,
                  rotate_range= [0.1045, 0, 0],
-                 affine_transformed=True, **kwargs):
+                 affine_transformed=True, return_polygon_info=False, **kwargs):
         self.include_masks = include_masks
         self.npts = npts
         self.in_dim = in_dim
@@ -200,6 +200,13 @@ class ConvertCoco(object):
         self.max_scale = max_scale
         self.affine_transformed = affine_transformed
         self.rotate_range = rotate_range
+        # when True, appends a per-tooth boundary/class info dict as the last
+        # return value -- callers that rasterize points into images need to
+        # know which points belong to which tooth (target_points/moving_points
+        # are otherwise flattened across all teeth with no boundary markers).
+        # off by default so existing callers expecting a fixed-length tuple
+        # (e.g. CocoDetectionWrapper) are unaffected.
+        self.return_polygon_info = return_polygon_info
 
     # def
     def __call__(self, image, target, pose='upper'):
@@ -277,9 +284,11 @@ class ConvertCoco(object):
             lower_sort_universal, classes, return_indices=True)
 
         pose_inds = upper_inds if pose == 'upper' else lower_inds
+        pose_classes = classes[pose_inds]
         this_full_polys, this_subsample_polys, this_polys_center, this_polys_normals = sampling_points_and_polygons(uniform_polygons, pose_inds, pose,
                                                                                   with_uniform_normals=self.in_dim in (4, 6))
         num_polygons = len(this_subsample_polys)
+        target_polygon_sizes = np.array([len(p) for p in this_full_polys], dtype=np.int64)
         # upper_arch = [np.mean(uniform_polygons[v], axis=0) for v in upper_inds]
         # assert len(this_polys)  > 0, f"No polygons found for pose '{pose}' with indices {pose_inds}."
         # source - points
@@ -296,6 +305,10 @@ class ConvertCoco(object):
         target_points = np.concatenate(this_full_polys, axis=0)
         # target_points = this_polys_concat
         moving_points = np.concatenate(this_subsample_polys, axis=0)
+        # sizes/classes for moving_points as it stands here (all teeth for
+        # this pose, before the deform_mode/teeth-drop branch below decides
+        # whether moving_points keeps this full set or gets select_indices-sliced)
+        full_moving_polygon_sizes = np.array([len(p) for p in this_subsample_polys], dtype=np.int64)
         # fixed center of deform
 
         deform_mode = self.deform_mode
@@ -368,14 +381,21 @@ class ConvertCoco(object):
             start += len(this_subsample_polys[i])
         select_indices = np.concatenate([all_indices[i] for i in select])
         # drop-points
+        moving_target_polygon_sizes = np.array([len(this_subsample_polys[i]) for i in select], dtype=np.int64)
+        moving_target_classes = pose_classes[select]
 
         moving_target_points = moving_points[select_indices]
 
         # moving_target_points = moving_points.copy()
         if deform_mode:
             moving_points = deform_moving_points[select_indices]
+            # deform_mode slices moving_points down to select_indices too,
+            # so it now matches moving_target_points, not the full pose set
+            moving_polygon_sizes = moving_target_polygon_sizes
+            moving_classes = moving_target_classes
         else:
-            pass
+            moving_polygon_sizes = full_moving_polygon_sizes
+            moving_classes = pose_classes
         # moving_target_points = np.concatenate([this_polys[i] for i in select], axis=0)
         # moving_points = np.concatenate([this_polys[i] for i in select], axis=0)
         # all_indices_concat = np.concatenate(all_indices, axis=0)
@@ -423,25 +443,44 @@ class ConvertCoco(object):
             moving_points = inverse_similarity_transform(
                 moving_points, R, t, scale)
 
+        polygon_info = None
+        if self.return_polygon_info:
+            polygon_info = {
+                # sizes/classes are index-aligned lists, one entry per tooth,
+                # in the same order the points were concatenated. moving_* here
+                # describes moving_points as actually returned below (its size
+                # depends on deform_mode, see above); moving_target_* always
+                # describes moving_target_points (always select_indices-sliced).
+                'target_polygon_sizes': target_polygon_sizes,
+                'target_classes': pose_classes,
+                'moving_polygon_sizes': moving_polygon_sizes,
+                'moving_classes': moving_classes,
+                'moving_target_polygon_sizes': moving_target_polygon_sizes,
+                'moving_target_classes': moving_target_classes,
+            }
+
         if self.estimate_scale:
             items = [target_points, moving_points,
                      moving_target_points, R, t, scale]
             target_points, moving_points, moving_target_points, R, t, scale = \
                 [v.astype(np.float32) for v in items]
-                
+
             # if self.in_dim in (2, 4):
             #     # = project_geometry(moving_points, coord_dim=2)
             #     has_normal = self.in_dim in (4,)
             #     target_points, moving_points, moving_target_points = [project_geometry(v, coord_dim=2, has_normal=has_normal) \
             #         for v in [target_points, moving_points, moving_target_points]]
-                
+
             #     R, t = project_pose(R, t, coord_dim=2)
-                
-                
+
+            if polygon_info is not None:
+                return target_points, moving_points, moving_target_points, R, t, scale, polygon_info
             return target_points, moving_points, moving_target_points, R, t, scale
         items = [target_points, moving_points, moving_target_points, R, t]
         target_points, moving_points, moving_target_points, R, t = \
             [v.astype(np.float32) for v in items]
+        if polygon_info is not None:
+            return target_points, moving_points, moving_target_points, R, t, polygon_info
         return target_points, moving_points, moving_target_points, R, t
 
         # vtk_utils.show([this_polys_concat, padding_pts1, vtk_utils.get_axes(200)])
