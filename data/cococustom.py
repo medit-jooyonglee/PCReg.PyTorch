@@ -187,6 +187,7 @@ class ConvertCoco(object):
     def __init__(self, include_masks=False, npts=256, estimate_scale=True,
                  min_scale=0.9, max_scale=1.1, deform_mode=False,
                  in_dim=3,
+                 rotate_range= [0.1045, 0, 0],
                  affine_transformed=True, **kwargs):
         self.include_masks = include_masks
         self.npts = npts
@@ -196,6 +197,7 @@ class ConvertCoco(object):
         self.min_scale = min_scale
         self.max_scale = max_scale
         self.affine_transformed = affine_transformed
+        self.rotate_range = rotate_range
 
     # def
     def __call__(self, image, target, pose='upper'):
@@ -381,13 +383,13 @@ class ConvertCoco(object):
             # pivot transform
         scale_range = [self.min_scale,
                        self.max_scale] if self.estimate_scale else [1.0, 1.0]
-        roate_range = [0.1045, 0, 0]
+        rotate_range = self.rotate_range
         translate_range = [0.008, 0.008, 0.0]
         # 0.1045 == approx 6degree 
         afm_mat = image_utils.batch_aug_params(
             {
                 # 10 degree??
-                'rotate': roate_range,
+                'rotate': rotate_range,
                 'translate': translate_range,
                 # 'translate': [0.2, 0.2, 0.0],
                 'scale': scale_range,
