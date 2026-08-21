@@ -312,15 +312,15 @@ class ConvertCoco(object):
         # fixed center of deform
 
         deform_mode = self.deform_mode
-
+        a_ratio, b_ratio, c_range = 2.0, 0.00, 0.005
         if deform_mode:
 
             deform_upper_arch, new_coeff = deform_quadratic_curve(
                 this_polys_center,
                 *fit_upper_coeef,
-                a_ratio=0.9,
-                b_ratio=0.00,
-                c_range=0.005,
+                a_ratio=a_ratio,
+                b_ratio=b_ratio,
+                c_range=c_range,
                 x_scale_ratio=0.05,
                 # x_shift_range=0,
                 x_shift_range=(20/max_len),
