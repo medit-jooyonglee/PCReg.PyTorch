@@ -15,7 +15,7 @@ except ImportError:
     from utils import (batch_quat2mat, batch_angle2mat, batch_transform,
                        batch_similarity_transform, compose_similarity,
                        geometry_layout)
-from .pointnet2 import PointNet2Encoder
+from .pointnet2 import PointNet2Encoder, farthest_point_sample, index_points
 from .dgcnn import DGCNNEncoder
 
 
@@ -158,23 +158,68 @@ class IterativeBenchmark(nn.Module):
 
 
 class SimilarityBenchmark(nn.Module):
-    """Predict source-to-target rotation, translation and isotropic scale."""
+    """Predict source-to-target rotation, translation and isotropic scale.
+
+    pooling='global' (default): each cloud is reduced to a single pooled
+    feature vector (max-pool inside PointNet/DGCNN, or the final set-abstraction
+    pool inside PointNet2Encoder) before source/target are ever combined --
+    this collapses exactly the per-point positional structure a precise pose
+    regression needs, the same failure mode global-average-pooling caused for
+    SimilarityReg2D's image encoder (see reversereg/models/similarity2d.py).
+    pooling='local' (requires backbone='pointnet2', which is the only backbone
+    here that exposes per-point features): keeps a small set of per-point
+    local features (picked via farthest-point sampling, so they spread across
+    the cloud rather than clustering) alongside the global vector, so the
+    decoder has positional detail to work with instead of only a single
+    pooled summary per cloud.
+
+    fusion='siamese' (default): source and target are each run through the
+    encoder independently (shared weights), then combined only at the
+    decoder -- mirrors how this class always worked.
+    fusion='early': source and target points are concatenated into one cloud
+    (along the point axis, with an extra per-point flag channel marking which
+    side each point came from) and run through the encoder *once*, like
+    reversereg/models/similarity2d.py's SimilarityReg2D fusion='early' /
+    voxelmorph's VxmPairwise. With backbone='pointnet2' this lets
+    SetAbstraction's neighbor grouping mix nearby source/target points
+    together during encoding, instead of only comparing them after each side
+    has already been pooled away independently.
+    """
 
     def __init__(self, in_dim=3, gn=False, backbone='pointnet2',
                  fcs=(1024, 512, 256), transform_head: int = -1,
-                 max_log_scale=0.35, **kwargs):
+                 max_log_scale=0.35, pooling='global', num_local_points=8,
+                 fusion='siamese', **kwargs):
         super(SimilarityBenchmark, self).__init__()
         self.in_dim = in_dim
         self.coord_dim, self.has_normal = geometry_layout(in_dim)
         self.max_log_scale = float(max_log_scale)
-        self.encoder, feature_dim = _make_encoder(backbone, in_dim, gn,
+        self.pooling = pooling
+        if self.pooling not in ('global', 'local'):
+            raise ValueError("pooling must be 'global' or 'local', got {!r}".format(pooling))
+        if self.pooling == 'local' and backbone != 'pointnet2':
+            raise ValueError(
+                "pooling='local' requires backbone='pointnet2' (the only backbone "
+                "here that exposes per-point features), got backbone={!r}".format(backbone)
+            )
+        self.num_local_points = num_local_points
+
+        self.fusion = fusion
+        if self.fusion not in ('siamese', 'early'):
+            raise ValueError("fusion must be 'siamese' or 'early', got {!r}".format(fusion))
+
+        encoder_in_dim = in_dim + 1 if self.fusion == 'early' else in_dim
+        self.encoder, feature_dim = _make_encoder(backbone, encoder_in_dim, gn,
                                                   **kwargs)
+        per_cloud_dim = feature_dim
+        if self.pooling == 'local':
+            per_cloud_dim = feature_dim + self.encoder.point_dim * self.num_local_points
         pose_dim = self.coord_dim + _rotation_dim(self.coord_dim) + 1
 
         fcs = list(fcs)
         if transform_head <= 0:
             fcs = fcs + [pose_dim]
-        current = feature_dim * 2
+        current = per_cloud_dim if self.fusion == 'early' else per_cloud_dim * 2
         self.decoder = nn.Sequential()
         for i, output in enumerate(fcs):
             self.decoder.add_module(f'fc_{i}', nn.Linear(current, output))
@@ -195,11 +240,36 @@ class SimilarityBenchmark(nn.Module):
             with torch.no_grad():
                 self.transform_head.bias[self.coord_dim] = 1.0
 
+    def encode(self, x):
+        if self.pooling == 'global':
+            return self.encoder(x)
+        global_features, point_features = self.encoder(x, return_point_features=True)
+        coords = x[:, :self.coord_dim].transpose(1, 2).contiguous()  # (B, N, coord_dim)
+        sample_indices = farthest_point_sample(coords, self.num_local_points)
+        local_features = index_points(point_features, sample_indices)  # (B, K, point_dim)
+        local_flat = local_features.reshape(local_features.shape[0], -1)
+        return torch.cat([global_features, local_flat], dim=-1)
+
+    def _fuse_early(self, source, target):
+        # concat along the point axis (not channels -- clouds are sets of
+        # points, not a shared grid like images), with a flag channel so the
+        # encoder can still tell which points came from which side
+        source_flag = source.new_ones(source.shape[0], 1, source.shape[2])
+        target_flag = target.new_zeros(target.shape[0], 1, target.shape[2])
+        return torch.cat([
+            torch.cat([source, source_flag], dim=1),
+            torch.cat([target, target_flag], dim=1),
+        ], dim=2)
+
     def forward(self, source, target):
-        source_features = self.encoder(source)
-        target_features = self.encoder(target)
-        decoded = self.decoder(torch.cat((source_features,
-                                         target_features), dim=1))
+        if self.fusion == 'early':
+            joint_features = self.encode(self._fuse_early(source, target))
+            decoded = self.decoder(joint_features)
+        else:
+            source_features = self.encode(source)
+            target_features = self.encode(target)
+            decoded = self.decoder(torch.cat((source_features,
+                                             target_features), dim=1))
         output = decoded if self.transform_head is None \
             else self.transform_head(decoded)
         rotation, translation, scale = _decode_pose(

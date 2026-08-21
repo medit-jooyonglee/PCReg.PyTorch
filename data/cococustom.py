@@ -318,7 +318,7 @@ class ConvertCoco(object):
             deform_upper_arch, new_coeff = deform_quadratic_curve(
                 this_polys_center,
                 *fit_upper_coeef,
-                a_ratio=2.0,
+                a_ratio=0.9,
                 b_ratio=0.00,
                 c_range=0.005,
                 x_scale_ratio=0.05,
