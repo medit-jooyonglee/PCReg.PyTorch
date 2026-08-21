@@ -21,6 +21,7 @@ import torchvision
 from PIL import Image
 
 from reversereg.preproc import sampler
+from sklearn.neighbors import NearestNeighbors
 
 from pcregmodel.utils import pc_normalize, random_select_points, shift_point_cloud, \
     jitter_point_cloud, generate_random_rotation_matrix, \
@@ -95,6 +96,7 @@ def sampling_points_and_polygons(uniform_polygons, sample_args, pose, with_unifo
 
     this_polys = [sampling_points(uniform_polygons[i], pose)
                   for i in sample_args]
+    select_uniform_polys = [uniform_polygons[i] for i in sample_args]
     # sampling
     this_archs = []
     for p in this_polys:
@@ -109,7 +111,7 @@ def sampling_points_and_polygons(uniform_polygons, sample_args, pose, with_unifo
         for poly in this_polys:
             res = compute_outward_normals(poly)
             poly_normals.append(res)
-    return this_polys, this_archs, poly_normals
+    return select_uniform_polys, this_polys, this_archs, poly_normals
 
 
 def coco_directory_structure_check(coco_dataset: torchvision.datasets.CocoDetection):
@@ -275,14 +277,15 @@ class ConvertCoco(object):
             lower_sort_universal, classes, return_indices=True)
 
         pose_inds = upper_inds if pose == 'upper' else lower_inds
-        this_polys, this_archs, this_polys_normals = sampling_points_and_polygons(uniform_polygons, pose_inds, pose,
+        this_full_polys, this_subsample_polys, this_polys_center, this_polys_normals = sampling_points_and_polygons(uniform_polygons, pose_inds, pose,
                                                                                   with_uniform_normals=self.in_dim in (4, 6))
+        num_polygons = len(this_subsample_polys)
         # upper_arch = [np.mean(uniform_polygons[v], axis=0) for v in upper_inds]
         # assert len(this_polys)  > 0, f"No polygons found for pose '{pose}' with indices {pose_inds}."
         # source - points
-        this_polys_concat = np.concatenate(this_polys, axis=0)
+        # this_polys_concat = np.concatenate(this_subsample_polys, axis=0)
 
-        fit_upper_coeef = fit_quadratic_least_squares(this_archs)
+        fit_upper_coeef = fit_quadratic_least_squares(this_polys_center)
         # center
         fit_upper_coeef = list(fit_upper_coeef)
 
@@ -290,9 +293,9 @@ class ConvertCoco(object):
 
         # make 2d points to 3d points
         # np.concatenate([this_polys_concat, np.zeros_like(this_polys_concat[:, :1])], axis=-1)
-        target_points = this_polys_concat
+        target_points = np.concatenate(this_full_polys, axis=0)
         # target_points = this_polys_concat
-        moving_points = target_points.copy()
+        moving_points = np.concatenate(this_subsample_polys, axis=0)
         # fixed center of deform
 
         deform_mode = self.deform_mode
@@ -300,7 +303,7 @@ class ConvertCoco(object):
         if deform_mode:
 
             deform_upper_arch, new_coeff = deform_quadratic_curve(
-                this_archs,
+                this_polys_center,
                 *fit_upper_coeef,
                 a_ratio=2.0,
                 b_ratio=0.00,
@@ -310,16 +313,16 @@ class ConvertCoco(object):
                 x_shift_range=(20/max_len),
                 x_noise_ratio=0.0,
             )
-            # vtk_utils.show([vtk_utils.create_curve_actor(this_archs), vtk_utils.create_curve_actor(deform_upper_arch)])
+            # vtk_utils.show([vtk_utils.create_curve_actor(this_polys_center), vtk_utils.create_curve_actor(deform_upper_arch)])
             deform_moving_points = sampler.apply_proxy_idw_deformation_points(moving_points,
-                                                                              this_archs,
+                                                                              this_polys_center,
                                                                               deform_upper_arch,
 
                                                                               )
         else:
             deform_moving_points = moving_points
             pass
-            # deform_upper_arch = this_archs
+            # deform_upper_arch = this_polys_center
             # new_coeff = fit_upper_coeef
         # zero-padding z-coords
         moving_points = np.concatenate(
@@ -350,7 +353,7 @@ class ConvertCoco(object):
         # moving_target_points = random_select_points(moving_points, int(target_points.shape[0] * 0.8))
 
         # teeth-by-teeth drop
-        args = [i for i in range(len(this_polys))]
+        args = [i for i in range(num_polygons)]
         if np.random.uniform(0, 1) < 0.8:
             select = np.sort(np.random.choice(
                 args, int(len(args)*0.8), replace=False))
@@ -360,9 +363,9 @@ class ConvertCoco(object):
         # all_indices = [np.arange(len(this_polys[i])) for i in range(len(this_polys))]
         all_indices = []
         start = 0
-        for i in range(len(this_polys)):
-            all_indices.append(start + np.arange(len(this_polys[i])))
-            start += len(this_polys[i])
+        for i in range(num_polygons):
+            all_indices.append(start + np.arange(len(this_subsample_polys[i])))
+            start += len(this_subsample_polys[i])
         select_indices = np.concatenate([all_indices[i] for i in select])
         # drop-points
 
@@ -371,6 +374,8 @@ class ConvertCoco(object):
         # moving_target_points = moving_points.copy()
         if deform_mode:
             moving_points = deform_moving_points[select_indices]
+        else:
+            pass
         # moving_target_points = np.concatenate([this_polys[i] for i in select], axis=0)
         # moving_points = np.concatenate([this_polys[i] for i in select], axis=0)
         # all_indices_concat = np.concatenate(all_indices, axis=0)
@@ -386,33 +391,37 @@ class ConvertCoco(object):
         rotate_range = self.rotate_range
         translate_range = [0.008, 0.008, 0.0]
         # 0.1045 == approx 6degree 
-        afm_mat = image_utils.batch_aug_params(
-            {
-                # 10 degree??
-                'rotate': rotate_range,
-                'translate': translate_range,
-                # 'translate': [0.2, 0.2, 0.0],
-                'scale': scale_range,
-            },
-            1,
-            [0, 0, 0],
-            pivot_scale=True,
-        )
+        if self.affine_transformed:
+            afm_mat = image_utils.batch_aug_params(
+                {
+                    # 10 degree??
+                    'rotate': rotate_range,
+                    'translate': translate_range,
+                    # 'translate': [0.2, 0.2, 0.0],
+                    'scale': scale_range,
+                },
+                1,
+                [0, 0, 0],
+                pivot_scale=True,
+            )
 
-        rot, scale, translate = geometry_numpy.decompose_complete_matrix(
-            afm_mat[0], first_scale=True)
+            rot, scale, translate = geometry_numpy.decompose_complete_matrix(
+                afm_mat[0], first_scale=True)
 
-        tol = 1e-6
-        scale0 = scale.copy()
-        np.fill_diagonal(scale0, 0)
-        assert np.allclose(
-            scale0, 0, atol=tol), 'we set identical x, y,z  scaling'
-        R, scale, t = rot, scale[0, 0], translate
+            tol = 1e-6
+            scale0 = scale.copy()
+            np.fill_diagonal(scale0, 0)
+            assert np.allclose(
+                scale0, 0, atol=tol), 'we set identical x, y,z  scaling'
+            R, scale, t = rot, scale[0, 0], translate
+        else:
+            R, t, scale = np.eye(3, dtype=np.float32), np.zeros([3], dtype=np.float32), np.array(1.0)
+            
 
         if self.affine_transformed:
 
             moving_points = inverse_similarity_transform(
-                moving_target_points, R, t, scale)
+                moving_points, R, t, scale)
 
         if self.estimate_scale:
             items = [target_points, moving_points,
@@ -444,7 +453,7 @@ class ConvertCoco(object):
 
         # https://github.com/medit-AI/reverse-registration/blob/develop_registration/outputs
         # vtk_utils.split_show([
-        #     vtk_utils.create_curve_actor(this_archs),
+        #     vtk_utils.create_curve_actor(this_polys_center),
         #     vtk_utils.create_curve_actor(deform_upper_arch),
         #     uniform_polygons,
         #     vtk_utils.get_axes(100)
@@ -1039,13 +1048,14 @@ class CocoDetectionWrapper(CocoDetection):
     #             idx = (idx + 1) % len(self.ids)  # Move to the next index
 
 if __name__ == "__main__":
+    deform_mode = True
     dataset = CocoDetection(
         img_folder='E:/dataset/reverse_tomosynthesis/kaggle_xrays/cbct_ios_dcm',
         ann_file='E:/dataset/reverse_tomosynthesis/kaggle_xrays/cbct_ios_dcm/annotations.json',
         # None
         in_dim=3,
-        # deform_mode=True,
-        affine_transformed=True,
+        deform_mode=deform_mode,
+        affine_transformed=False,
 
 
     )
@@ -1056,7 +1066,18 @@ if __name__ == "__main__":
         item = dataset[np.random.randint(len(dataset))]
         tgt, src, moving_target, R, t, scale = item
 
+        # cheing...
         fit_src = similarity_transform(src, R, t, scale)
+        np.allclose(fit_src, moving_target, atol=1e-5)
+        
+        if not deform_mode:
+            neighbor = NearestNeighbors()
+            neighbor.fit(tgt)
+            dist, inds = neighbor.kneighbors(fit_src, n_neighbors=1)
+            assert np.allclose(dist, 0, atol=1e-5), "Fitted source points do not match moving target points."
+            
+            
+        
         # vtk_utils.split_show([
         #     src, tgt
         # ], [
